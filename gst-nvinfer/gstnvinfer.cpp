@@ -1700,18 +1700,20 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     size_t frame_step = in_surf->surfaceList[i].pitch;
     cv::Mat rgba(frame_height, frame_width, CV_8UC4, src_data, frame_step);
 
-    cv::Point2f src_points[4] = { {145+150, 60+80}, {485+480, 56+80}, {540+550, 360+500}, {95+110, 360+500} };
-    cv::Point2f dst_points[4] = { {0, 0}, {640, 0}, {640, 480}, {0, 480} };
+    cv::Point2f src_points[4] = { {145+150, 60+80}, {485+450, 56+80}, {540+500, 360+500}, {95+110, 360+500} };
+    cv::Point2f dst_points[4] = { {0, 0}, {500, 0}, {500, 500}, {0, 500} };
 
     cv::Mat perspective_matrix = cv::getPerspectiveTransform(src_points, dst_points);
     cv::Mat transformed_image;
-    cv::warpPerspective(rgba, transformed_image, perspective_matrix, cv::Size(640, 480));
+    cv::warpPerspective(rgba, transformed_image, perspective_matrix, cv::Size(500, 500));
     cv::Size original_size(frame_width, frame_height);
     cv::resize(transformed_image, transformed_image, original_size);
     cudaMemcpy(in_surf->surfaceList[i].dataPtr, 
               transformed_image.data, 
               transformed_image.total() * transformed_image.elemSize(), 
               cudaMemcpyHostToDevice);
+
+    free(src_data);
     // printf("---------------\n");
     // printf("source_id %d \n", frame.frame_meta->source_id);
     // printf("source_frame_width %d \n", frame.frame_meta->source_frame_width);

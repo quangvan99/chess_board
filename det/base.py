@@ -13,12 +13,103 @@ from ops import PERF_DATA
 import cv2
 # Fix bug deepstream 7.0
 os.system("rm -rf ~/.cache/gstreamer-1.0/registry.x86_64.bin")
+class MoveRecorder:
+    """Ghi nhận và xử lý các nước đi cờ"""
+    def __init__(self):
+        self.previous_board = None
+        self.move_history = []
 
+    def record_move(self, current_board):
+        if self.previous_board is None:
+            self.previous_board = current_board  # First time, update directly
+            return None
+        print("Previous board", self.previous_board)
+        print("Current board", current_board)
+        if not self.is_board_change_valid(self.previous_board, current_board):
+            print("Board change is too large, keeping the old state.")
+            return None
+
+        move = self.detect_move_with_capture(self.previous_board, current_board)
+        if move:
+            self.previous_board = current_board  # Update current board state
+        
+        return move
+
+    def is_board_change_valid(self, old_board, new_board, max_changes=2):
+        changes = 0
+        for i in range(len(old_board)):
+            for j in range(len(old_board[i])):
+                if old_board[i][j] != new_board[i][j]:
+                    changes += 1
+                if changes > max_changes:
+                    print(f"Too many changes: {changes}")
+                    return False
+        return True
+
+    def detect_move(self, old_board, new_board):
+        start_position = None
+        end_position = None
+        moved_piece = None
+
+        for i in range(len(old_board)):
+            for j in range(len(old_board[i])):
+                old_piece = old_board[i][j]
+                new_piece = new_board[i][j]
+
+                if old_piece != new_piece:
+                    if old_piece != '' and new_piece == '':
+                        start_position = (i, j)
+                        moved_piece = old_piece
+                    if old_piece == '' and new_piece != '':
+                        end_position = (i, j)
+                    else:
+                        end_position = (i, j)
+        print(start_position, end_position, moved_piece)
+        if start_position and end_position and moved_piece:
+            return (start_position, end_position, moved_piece)
+        return None
+    
+    def detect_move_with_capture(self, old_board, new_board):
+        start_position = None
+        end_position = None
+        moved_piece = None
+        captured_piece = None
+
+        for i in range(len(old_board)):
+            for j in range(len(old_board[i])):
+                old_piece = old_board[i][j]
+                new_piece = new_board[i][j]
+
+                if old_piece != new_piece:
+                    if old_piece != 'O' and new_piece == 'O':
+                        start_position = (i, j)
+                        moved_piece = old_piece
+                    elif old_piece == 'O' and new_piece != 'O':
+                        end_position = (i, j)
+                    elif old_piece != 'O' and new_piece != 'O' and old_piece[0] != new_piece[0]:
+                        # start_position = (i, j)
+                        end_position = (i, j)
+                        captured_piece = old_piece
+                        moved_piece = new_piece
+        # if captured_piece and start_position:
+        #     end_position = start_position
+        #     for i in range(len(old_board)):
+        #         for j in range(len(old_board[i])):
+        #             if old_board[i][j] == captured_piece:
+        #                 end_position = (i, j)
+        #                 break
+        # Kết quả bao gồm vị trí bắt đầu, vị trí đích, quân cờ đã di chuyển, và quân cờ bị ăn (nếu có)
+        if start_position and end_position and moved_piece:
+            return (start_position, end_position, moved_piece)
+        return None
 class BasePipeline:
     def __init__(self):
         self.count = 0
         self.mem_type = int(pyds.NVBUF_MEM_CUDA_UNIFIED)
-    
+        self.previous_board = None  
+        self.current_arrow = None   
+        self.move_record = MoveRecorder()  
+        self.previous_arrow = None
     def get_element(self, name):
         return self.pipeline.get_by_name(name)
 
@@ -88,7 +179,14 @@ class BasePipeline:
                     Gst.Element.state_get_name(new_state)))
         
         return True
-    
+    def intersection_area(self, box1, box2):
+        """Calculate intersection area of two boxes"""
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+        return max(0, x2 - x1) * max(0, y2 - y1)
+
     def tiler_sink_pad_buffer_probe(self, pad, info, u_data):
         
         gst_buffer = info.get_buffer()
@@ -110,26 +208,28 @@ class BasePipeline:
             # # Chuyển đổi NvBufSurface thành numpy array
             # frame_image = np.array(surface, copy=True, order='C')
             # print(frame_image.shape)
+            objects = []
             l_obj = frame_meta.obj_meta_list
 
             while l_obj is not None:
                 try:
                     # Casting l_obj.data to pyds.NvDsObjectMeta
                     obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
+                    objects.append(obj_meta)
+                    # print(objects)
                     obj_meta.text_params.display_text = f"{obj_meta.class_id}:{obj_meta.confidence*100:.0f}"
-                    # exit()
-                    # Lấy bounding box từ object meta
-                    rect_params = obj_meta.rect_params
-                    left = rect_params.left
-                    top = rect_params.top
-                    width = rect_params.width
-                    height = rect_params.height
-                    
-                    
-
-                    # In ra tọa độ bounding box của object
-                    # print(f"Stream: {frame_meta.pad_index}, Object ID: {obj_meta.object_id}, "
-                    #     f"Bounding Box: Left={left}, Top={top}, Width={width}, Height={height}")
+                    # # exit()
+                    xc_yc_list = [(122, 34), (122, 104), (122, 164), (122, 234), (122, 294), (122, 354), (122, 414), (122, 484), (122, 544), 
+                                  (240, 34), (240, 104), (240, 164), (240, 234), (240, 294), (240, 354), (240, 414), (240, 484), (240, 544),
+                                  (358, 34), (358, 104), (358, 164), (358, 234), (358, 294), (358, 354), (358, 414), (358, 484), (358, 544),
+                                  (476, 34), (476, 104), (476, 164), (476, 234), (476, 294), (476, 354), (476, 414), (476, 484), (476, 544),
+                                  (594, 34), (594, 104), (594, 164), (594, 234), (594, 294), (594, 354), (594, 414), (594, 484), (594, 544),
+                                  (712, 34), (712, 104), (712, 164), (712, 234), (712, 294), (712, 354), (712, 414), (712, 484), (712, 544),
+                                  (830, 34), (830, 104), (830, 164), (830, 234), (830, 294), (830, 354), (830, 414), (830, 484), (830, 544),
+                                  (948, 34), (948, 104), (948, 164), (948, 234), (948, 294), (948, 354), (948, 414), (948, 484), (948, 544),
+                                  (1066, 34), (1066, 104), (1066, 164), (1066, 234), (1066, 294), (1066, 354), (1066, 414), (1066, 484), (1066, 544),
+                                  (1184, 34), (1184, 104), (1184, 164), (1184, 234), (1184, 294), (1184, 354), (1184, 414), (1184, 484), (1184, 544),
+                                  ]
                 except StopIteration:
                     break
 
@@ -145,6 +245,66 @@ class BasePipeline:
                 l_frame = l_frame.next
             except StopIteration:
                 break
+            board = []
+
+            for rect in xc_yc_list:
+                is_inside_bbox = False
+                x_center, y_center = rect
+                for obj in objects:
+                    rect_params = obj.rect_params
+                    left = rect_params.left
+                    top = rect_params.top
+                    width = rect_params.width
+                    height = rect_params.height
+                    
+                    if left < x_center < left + width and top < y_center < top + height:
+                        is_inside_bbox = True
+                        break
+                board.append("X" if is_inside_bbox else "O")
+            board = np.array(board).reshape(10, 9)
+            self.current_arrow = self.move_record.record_move(board)
+            print("Current arrow", self.current_arrow)
+            if self.current_arrow is not None:
+                if self.current_arrow != self.previous_arrow:
+                    start_pos, end_pos, text = self.current_arrow
+                    start_pos = (xc_yc_list[start_pos[0] * 9 + start_pos[1]])
+                    end_pos = (xc_yc_list[end_pos[0] * 9 + end_pos[1]])
+                    self.previous_arrow = self.current_arrow 
+                else:
+                    start_pos, end_pos, text = self.previous_arrow
+                    start_pos = (xc_yc_list[start_pos[0] * 9 + start_pos[1]])
+                    end_pos = (xc_yc_list[end_pos[0] * 9 + end_pos[1]])
+                print("start_pos", start_pos)
+                print("end_pos", end_pos)
+                display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+                display_meta.num_arrows = 1
+                display_meta.arrow_params[0].x1 = start_pos[0]
+                display_meta.arrow_params[0].y1 = start_pos[1]
+                display_meta.arrow_params[0].x2 = end_pos[0]
+                display_meta.arrow_params[0].y2 = end_pos[1]
+                display_meta.arrow_params[0].arrow_width = 2
+                # display_meta.arrow_params[0].arrow_color = pyds.NvOSD_ColorParams(1.0, 0.0, 0.0, 1.0) 
+                pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
+            else:
+                if self.previous_arrow is not None:
+                    start_pos, end_pos, text = self.previous_arrow
+                    start_pos = (xc_yc_list[start_pos[0] * 9 + start_pos[1]])
+                    end_pos = (xc_yc_list[end_pos[0] * 9 + end_pos[1]])
+                    
+                    print("No new arrow, using previous arrow:")
+                    print("start_pos", start_pos)
+                    print("end_pos", end_pos)
+                    display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+                    display_meta.num_arrows = 1
+                    display_meta.arrow_params[0].x1 = start_pos[0]
+                    display_meta.arrow_params[0].y1 = start_pos[1]
+                    display_meta.arrow_params[0].x2 = end_pos[0]
+                    display_meta.arrow_params[0].y2 = end_pos[1]
+                    display_meta.arrow_params[0].arrow_width = 2
+                    # display_meta.arrow_params[0].arrow_color = pyds.NvOSD_ColorParams(1.0, 0.0, 0.0, 1.0)
+                    pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
+            # if self.previous_board is None:
+            #     self.previous_board = board
 
         return Gst.PadProbeReturn.OK
 
