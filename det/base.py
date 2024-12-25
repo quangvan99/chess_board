@@ -9,7 +9,7 @@ gi.require_version('Gst', '1.0')
 from gi.repository import GLib, Gst
 import pyds
 
-from ops import PERF_DATA
+from det.ops import PERF_DATA
 import cv2
 import configparser
 import ast

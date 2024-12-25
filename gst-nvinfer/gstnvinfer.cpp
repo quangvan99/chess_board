@@ -1658,7 +1658,6 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     rect_params.top = 0;
     rect_params.width = in_surf->surfaceList[i].width;
     rect_params.height = in_surf->surfaceList[i].height;
-    
     /* Scale and convert the buffer. */
     if (get_converted_buffer (nvinfer, in_surf, in_surf->surfaceList + i,
             &rect_params, memory->surf, memory->surf->surfaceList + idx,
@@ -1683,6 +1682,7 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     //frame.history = nullptr;
     frame.input_surf_params = in_surf->surfaceList + i;
 
+    printf("source_id %d \n", frame.frame_meta->source_id);
     // std::vector<unsigned char> src_data(in_surf->surfaceList[i].dataSize);
     unsigned char *src_data = new unsigned char[in_surf->surfaceList[i].dataSize];
     // src_data = (unsigned char *)malloc(in_surf->surfaceList[i].dataSize);
@@ -1695,8 +1695,8 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
 
     cv::Mat rgba(frame_height, frame_width, CV_8UC4, src_data, frame_step);
 
-    std::map<std::string, cv::Point2f> src_points = readPointsFromConfig("/home/project/chess_board/cfg/point.txt", "src_points");
-    std::map<std::string, cv::Point2f> dst_points = readPointsFromConfig("/home/project/chess_board/cfg/point.txt", "dst_points");
+    std::map<std::string, cv::Point2f> src_points = readPointsFromConfig("/home/project/chess_board/cfg/chessboard_detection_results.txt", "src_points");
+    std::map<std::string, cv::Point2f> dst_points = readPointsFromConfig("/home/project/chess_board/cfg/chessboard_detection_results.txt", "dst_points");
 
     cv::Point2f src[4] = {src_points["point1"], src_points["point2"], src_points["point3"], src_points["point4"]};
     cv::Point2f dst[4] = {dst_points["point1"], dst_points["point2"], dst_points["point3"], dst_points["point4"]};
