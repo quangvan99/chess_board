@@ -11,6 +11,8 @@ import pyds
 
 from ops import PERF_DATA
 import cv2
+import configparser
+import ast
 # Fix bug deepstream 7.0
 os.system("rm -rf ~/.cache/gstreamer-1.0/registry.x86_64.bin")
 class MoveRecorder:
@@ -110,6 +112,7 @@ class BasePipeline:
         self.current_arrow = None   
         self.move_record = MoveRecorder()  
         self.previous_arrow = None
+        self.config_point_path = "/home/project/chess_board/cfg/point.txt"
     def get_element(self, name):
         return self.pipeline.get_by_name(name)
 
@@ -186,6 +189,17 @@ class BasePipeline:
         x2 = min(box1[2], box2[2])
         y2 = min(box1[3], box2[3])
         return max(0, x2 - x1) * max(0, y2 - y1)
+    
+    def read_grid_points(self, config_point_path, section, key):
+        config = configparser.ConfigParser()
+        config.read(config_point_path)
+        points_str = config.get(section, key)
+        try:
+            points = ast.literal_eval(points_str)
+            return [tuple(map(int, point)) for point in points]  
+        except Exception as e:
+            print(f"Error parsing points: {e}")
+            return []
 
     def tiler_sink_pad_buffer_probe(self, pad, info, u_data):
         
@@ -219,17 +233,7 @@ class BasePipeline:
                     # print(objects)
                     obj_meta.text_params.display_text = f"{obj_meta.class_id}:{obj_meta.confidence*100:.0f}"
                     # # exit()
-                    xc_yc_list = [(122, 34), (122, 104), (122, 164), (122, 234), (122, 294), (122, 354), (122, 414), (122, 484), (122, 544), 
-                                  (240, 34), (240, 104), (240, 164), (240, 234), (240, 294), (240, 354), (240, 414), (240, 484), (240, 544),
-                                  (358, 34), (358, 104), (358, 164), (358, 234), (358, 294), (358, 354), (358, 414), (358, 484), (358, 544),
-                                  (476, 34), (476, 104), (476, 164), (476, 234), (476, 294), (476, 354), (476, 414), (476, 484), (476, 544),
-                                  (594, 34), (594, 104), (594, 164), (594, 234), (594, 294), (594, 354), (594, 414), (594, 484), (594, 544),
-                                  (712, 34), (712, 104), (712, 164), (712, 234), (712, 294), (712, 354), (712, 414), (712, 484), (712, 544),
-                                  (830, 34), (830, 104), (830, 164), (830, 234), (830, 294), (830, 354), (830, 414), (830, 484), (830, 544),
-                                  (948, 34), (948, 104), (948, 164), (948, 234), (948, 294), (948, 354), (948, 414), (948, 484), (948, 544),
-                                  (1066, 34), (1066, 104), (1066, 164), (1066, 234), (1066, 294), (1066, 354), (1066, 414), (1066, 484), (1066, 544),
-                                  (1184, 34), (1184, 104), (1184, 164), (1184, 234), (1184, 294), (1184, 354), (1184, 414), (1184, 484), (1184, 544),
-                                  ]
+                    xc_yc_list = self.read_grid_points(self.config_point_path, "grid_chess_points", "grid_points")
                 except StopIteration:
                     break
 
@@ -246,7 +250,7 @@ class BasePipeline:
             except StopIteration:
                 break
             board = []
-
+            class_id = None
             for rect in xc_yc_list:
                 is_inside_bbox = False
                 x_center, y_center = rect
@@ -256,11 +260,14 @@ class BasePipeline:
                     top = rect_params.top
                     width = rect_params.width
                     height = rect_params.height
+                    # class_id = obj.class_id
+                    # print(f"Class ID: {class_id}")
                     
                     if left < x_center < left + width and top < y_center < top + height:
+                        class_id = obj.class_id
                         is_inside_bbox = True
                         break
-                board.append("X" if is_inside_bbox else "O")
+                board.append(class_id if is_inside_bbox else "O")
             board = np.array(board).reshape(10, 9)
             self.current_arrow = self.move_record.record_move(board)
             print("Current arrow", self.current_arrow)

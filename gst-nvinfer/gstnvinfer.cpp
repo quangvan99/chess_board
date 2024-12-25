@@ -33,7 +33,9 @@
 #include "gstnvinfer_yaml_parser.h"
 #include "gstnvinfer_property_parser.h"
 #include "gstnvinfer_impl.h"
-
+#include <fstream>
+#include <sstream>
+#include <map>
 using namespace gstnvinfer;
 using namespace nvdsinfer;
 
@@ -1544,8 +1546,41 @@ convert_batch_and_push_to_input_thread (GstNvInfer *nvinfer,
 //     delete[] contiguous_data;
 //     free(src_data);
 // }
+std::string trim(const std::string& line)
+{
+    const char* WhiteSpace = " \t\v\r\n";
+    std::size_t start = line.find_first_not_of(WhiteSpace);
+    std::size_t end = line.find_last_not_of(WhiteSpace);
+    return start == end ? std::string() : line.substr(start, end - start + 1);
+}
 
+std::map<std::string, cv::Point2f> readPointsFromConfig(const std::string& filePath, const std::string& section) {
+    std::map<std::string, cv::Point2f> points;
+    std::ifstream file(filePath);
+    std::string line, current_section;
 
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '#') continue; // Bỏ qua dòng trống và comment
+        if (line[0] == '[') { 
+            current_section = line.substr(1, line.find(']') - 1);
+            continue;
+        }
+
+        if (current_section == section) {
+            std::istringstream iss(line);
+            std::string key, value;
+            if (std::getline(iss, key, '=') && std::getline(iss, value)) {
+                float x, y;
+                std::string answer(trim(key));
+                sscanf(value.c_str(), "%f, %f", &x, &y);
+                points[answer] = cv::Point2f(x, y);
+            }
+        }
+    }
+    printf("points.size() %zu \n", points.size());
+
+    return points;
+}
 /* Process entire frames in the batched buffer. */
 static GstFlowReturn
 gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
@@ -1624,49 +1659,6 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     rect_params.width = in_surf->surfaceList[i].width;
     rect_params.height = in_surf->surfaceList[i].height;
     
-    // void *src_data = malloc(in_surf->surfaceList[i].dataSize);
-    // // Copy data from GPU to CPU
-    // cudaError_t err = cudaMemcpy(src_data,
-    //                             in_surf->surfaceList[i].dataPtr,
-    //                             in_surf->surfaceList[i].dataSize,
-    //                             cudaMemcpyDeviceToHost);
-    // size_t frame_step = in_surf->surfaceList[i].pitch;  // Pitch/stride of each row
-    // gint frame_width = (gint)in_surf->surfaceList[i].width;
-    // gint frame_height = (gint)in_surf->surfaceList[i].height;
-    // cv::Mat rgba(frame_height, frame_width, CV_8UC4, src_data, frame_step);
-    // Resize images to the same size
-    // cv::Size newSize(640, 320); // Assuming a smaller and more practical size
-    // cv::resize(rgba, rgba, newSize);
-    // Define the cropping rectangle (x, y, width, height)
-    // cv::Rect cropRegion(627, 362, 400, 300); // Adjust as needed
-    // 314, 57
-    // // 314, 192
-    // 95, 180
-    // (314-95), (192-57)
-
-
-    // Ensure the cropping rectangle is within the image bounds
-    // cropRegion &= cv::Rect(0, 0, rgba.cols, rgba.rows);
-
-    // Perform the crop
-    // cv::Mat croppedImage = rgba(cv::Range(116,720), cv::Range(200,1030));
-  
-    // // Resize images to the same size
-    // cv::Size newSize(frame_width, frame_height); // Assuming a smaller and more practical size
-    // cv::resize(croppedImage, croppedImage, newSize);
-
-    // //  copy to in_surf->surfaceList[i].dataPtr device memory
-    // cudaMemcpy(in_surf->surfaceList[i].dataPtr, 
-    //           croppedImage.data, 
-    //           croppedImage.total() * croppedImage.elemSize(), cudaMemcpyHostToDevice);
-
-    // cv::Mat bgr;
-    // cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR);
-    // char yuv_name[100];
-    // sprintf(yuv_name, "vis_face%d.png", i);
-    // cv::imwrite(yuv_name, bgr);
-    // printf("---------------\n");
-    
     /* Scale and convert the buffer. */
     if (get_converted_buffer (nvinfer, in_surf, in_surf->surfaceList + i,
             &rect_params, memory->surf, memory->surf->surfaceList + idx,
@@ -1691,29 +1683,34 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     //frame.history = nullptr;
     frame.input_surf_params = in_surf->surfaceList + i;
 
-    void *src_data = malloc(in_surf->surfaceList[i].dataSize);
-    cudaMemcpy(src_data, in_surf->surfaceList[i].dataPtr, 
-              in_surf->surfaceList[i].dataSize, cudaMemcpyDeviceToHost);
+    // std::vector<unsigned char> src_data(in_surf->surfaceList[i].dataSize);
+    unsigned char *src_data = new unsigned char[in_surf->surfaceList[i].dataSize];
+    // src_data = (unsigned char *)malloc(in_surf->surfaceList[i].dataSize);
+  
+    cudaMemcpy(src_data, in_surf->surfaceList[i].dataPtr, in_surf->surfaceList[i].dataSize, cudaMemcpyDeviceToHost);
 
     int frame_width = in_surf->surfaceList[i].width;
     int frame_height = in_surf->surfaceList[i].height;
     size_t frame_step = in_surf->surfaceList[i].pitch;
+
     cv::Mat rgba(frame_height, frame_width, CV_8UC4, src_data, frame_step);
 
-    cv::Point2f src_points[4] = { {145+150, 60+80}, {485+450, 56+80}, {540+500, 360+500}, {95+110, 360+500} };
-    cv::Point2f dst_points[4] = { {0, 0}, {500, 0}, {500, 500}, {0, 500} };
+    std::map<std::string, cv::Point2f> src_points = readPointsFromConfig("/home/project/chess_board/cfg/point.txt", "src_points");
+    std::map<std::string, cv::Point2f> dst_points = readPointsFromConfig("/home/project/chess_board/cfg/point.txt", "dst_points");
 
-    cv::Mat perspective_matrix = cv::getPerspectiveTransform(src_points, dst_points);
+    cv::Point2f src[4] = {src_points["point1"], src_points["point2"], src_points["point3"], src_points["point4"]};
+    cv::Point2f dst[4] = {dst_points["point1"], dst_points["point2"], dst_points["point3"], dst_points["point4"]};
+
+    cv::Mat perspective_matrix = cv::getPerspectiveTransform(src, dst);
     cv::Mat transformed_image;
     cv::warpPerspective(rgba, transformed_image, perspective_matrix, cv::Size(500, 500));
-    cv::Size original_size(frame_width, frame_height);
-    cv::resize(transformed_image, transformed_image, original_size);
-    cudaMemcpy(in_surf->surfaceList[i].dataPtr, 
-              transformed_image.data, 
-              transformed_image.total() * transformed_image.elemSize(), 
-              cudaMemcpyHostToDevice);
 
+    cv::resize(transformed_image, transformed_image, cv::Size(frame_width, frame_height));
+
+    cudaMemcpy(in_surf->surfaceList[i].dataPtr, transformed_image.data, transformed_image.total() * transformed_image.elemSize(), cudaMemcpyHostToDevice);
+    
     free(src_data);
+    // delete src_data;
     // printf("---------------\n");
     // printf("source_id %d \n", frame.frame_meta->source_id);
     // printf("source_frame_width %d \n", frame.frame_meta->source_frame_width);
@@ -2264,7 +2261,8 @@ gst_nvinfer_process_tensor_input (GstNvInfer * nvinfer, GstBuffer * inbuf,
         input_batch.returnInputFunc = nullptr;
 
         for (auto &tensor : tensor_input_batch.tensors)
-          tensor.dims.d[0] = tensor_input_batch.batch->frames.size();
+          tensor.inferDims.d[0] = tensor_input_batch.batch->frames.size();
+
 
         NvDsInferStatus status =
             DS_NVINFER_IMPL (nvinfer)->m_InferCtx->
