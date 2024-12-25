@@ -7,4 +7,14 @@ grid_points = [[(96, 82), (301, 82), (199, 82), (353, 82), (148, 82), (405, 82),
 [source_id_1]
 
 [source_id_2]
+video_path = ../../videos/video2_cut.mp4
+corners = None
+grid_points = None
+
+
+[source_id_3]
+video_path = ../../videos/sample2.mp4
+corners = None
+grid_points = None
+
 

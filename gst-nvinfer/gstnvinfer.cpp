@@ -1554,10 +1554,16 @@ std::string trim(const std::string& line)
     return start == end ? std::string() : line.substr(start, end - start + 1);
 }
 
-std::map<std::string, cv::Point2f> readPointsFromConfig(const std::string& filePath, const std::string& section) {
-    std::map<std::string, cv::Point2f> points;
+std::map<std::string, std::vector<cv::Point2f>> readPointsFromConfig(
+    const std::string& filePath, const std::string& sourceId, int frame_width, int frame_height) {
+    std::map<std::string, std::vector<cv::Point2f>> points;
     std::ifstream file(filePath);
     std::string line, current_section;
+
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open file " << filePath << std::endl;
+        return points;
+    }
 
     while (std::getline(file, line)) {
         if (line.empty() || line[0] == '#') continue; // Bỏ qua dòng trống và comment
@@ -1566,21 +1572,46 @@ std::map<std::string, cv::Point2f> readPointsFromConfig(const std::string& fileP
             continue;
         }
 
-        if (current_section == section) {
+        if (current_section == sourceId) {
             std::istringstream iss(line);
             std::string key, value;
             if (std::getline(iss, key, '=') && std::getline(iss, value)) {
-                float x, y;
-                std::string answer(trim(key));
-                sscanf(value.c_str(), "%f, %f", &x, &y);
-                points[answer] = cv::Point2f(x, y);
+                key = trim(key);
+                value = trim(value);
+
+                if (key == "corners") {
+                    std::vector<cv::Point2f> corners;
+                    std::istringstream value_stream(value);
+                    float x, y;
+                    char comma;
+
+                    while (value_stream >> x >> comma >> y) {
+                        corners.emplace_back(x, y);
+                        if (value_stream.peek() == ',') value_stream.ignore();
+                    }
+
+                    points["corners"] = corners;
+                }
             }
         }
     }
-    printf("points.size() %zu \n", points.size());
+
+    if (points["corners"].empty()) {
+        std::cout << "Warning: No corners found for source_id " << sourceId
+                  << ". Using default corners based on frame size.\n";
+        points["corners"] = {
+            cv::Point2f(0, 0),
+            cv::Point2f(frame_width - 1, 0),
+            cv::Point2f(frame_width - 1, frame_height - 1),
+            cv::Point2f(0, frame_height - 1)
+        };
+    }
 
     return points;
 }
+
+
+
 /* Process entire frames in the batched buffer. */
 static GstFlowReturn
 gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
@@ -1695,19 +1726,46 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
 
     cv::Mat rgba(frame_height, frame_width, CV_8UC4, src_data, frame_step);
 
-    std::map<std::string, cv::Point2f> src_points = readPointsFromConfig("/home/project/chess_board/cfg/chessboard_detection_results.txt", "src_points");
-    std::map<std::string, cv::Point2f> dst_points = readPointsFromConfig("/home/project/chess_board/cfg/chessboard_detection_results.txt", "dst_points");
+    std::map<std::string, std::vector<cv::Point2f>> points = readPointsFromConfig(
+        "/home/project/chess_board/seg/chessboard_detection_results.txt", 
+        "source_id_" + std::to_string(frame.frame_meta->source_id),
+        frame_width, 
+        frame_height
+    );
 
-    cv::Point2f src[4] = {src_points["point1"], src_points["point2"], src_points["point3"], src_points["point4"]};
-    cv::Point2f dst[4] = {dst_points["point1"], dst_points["point2"], dst_points["point3"], dst_points["point4"]};
+    std::vector<cv::Point2f> corners = points["corners"];
+    if (corners.size() != 4) {
+        std::cerr << "Error: Insufficient corner points. Exiting...\n";
+        return GST_FLOW_ERROR;
+    }
 
+    cv::Point2f src[4] = {
+        corners[0], corners[1], corners[2], corners[3]
+    };
+
+    printf("Source Points:\n");
+    for (int i = 0; i < 4; ++i) {
+        printf("(%f, %f)\n", src[i].x, src[i].y);
+    }
+
+    cv::Point2f dst[4] = {
+        cv::Point2f(0, 0),
+        cv::Point2f(500, 0),
+        cv::Point2f(500, 500),
+        cv::Point2f(0, 500)
+    };
+
+    // Transform and apply perspective
     cv::Mat perspective_matrix = cv::getPerspectiveTransform(src, dst);
     cv::Mat transformed_image;
     cv::warpPerspective(rgba, transformed_image, perspective_matrix, cv::Size(500, 500));
 
+    // Resize and copy back to GPU
     cv::resize(transformed_image, transformed_image, cv::Size(frame_width, frame_height));
+    cudaMemcpy(in_surf->surfaceList[i].dataPtr, transformed_image.data, 
+              transformed_image.total() * transformed_image.elemSize(), cudaMemcpyHostToDevice);
 
-    cudaMemcpy(in_surf->surfaceList[i].dataPtr, transformed_image.data, transformed_image.total() * transformed_image.elemSize(), cudaMemcpyHostToDevice);
+
     
     free(src_data);
     // delete src_data;

@@ -92,6 +92,6 @@ def process_multiple_videos(video_paths, result_file_path):
         thread.join()
 
 if __name__ == "__main__":
-    video_paths = ["../../videos/video1.mp4", "../../videos/lythaito.mp4", "../../videos/empty.mp4"]
+    video_paths = ["../../videos/video1.mp4", "../../videos/lythaito.mp4", "../../videos/video2_cut.mp4", "../../videos/sample2.mp4"]
     result_file_path = "chessboard_detection_results.txt"
     process_multiple_videos(video_paths, result_file_path)
