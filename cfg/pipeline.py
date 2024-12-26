@@ -23,8 +23,8 @@ for key in config['tracker']:
 sm = {"sm": {
         "plugin": "nvstreammux",
         "properties": {
-            "width": 1920,
-            "height": 1080,
+            "width": 1280,
+            "height": 1280,
             "batch-size": 4,
             # "batched-push-timeout": 4000000,
             "nvbuf-memory-type": None
