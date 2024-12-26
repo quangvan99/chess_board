@@ -1689,6 +1689,7 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     rect_params.top = 0;
     rect_params.width = in_surf->surfaceList[i].width;
     rect_params.height = in_surf->surfaceList[i].height;
+    printf("rect_params.width %f rect_params.height %f \n", rect_params.width, rect_params.height);
     /* Scale and convert the buffer. */
     if (get_converted_buffer (nvinfer, in_surf, in_surf->surfaceList + i,
             &rect_params, memory->surf, memory->surf->surfaceList + idx,
@@ -1719,15 +1720,14 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     // src_data = (unsigned char *)malloc(in_surf->surfaceList[i].dataSize);
   
     cudaMemcpy(src_data, in_surf->surfaceList[i].dataPtr, in_surf->surfaceList[i].dataSize, cudaMemcpyDeviceToHost);
-
     int frame_width = in_surf->surfaceList[i].width;
     int frame_height = in_surf->surfaceList[i].height;
     size_t frame_step = in_surf->surfaceList[i].pitch;
 
     cv::Mat rgba(frame_height, frame_width, CV_8UC4, src_data, frame_step);
-
+    // cv::imwrite("./output/original_frame.png", rgba);
     std::map<std::string, std::vector<cv::Point2f>> points = readPointsFromConfig(
-        "/home/project/chess_board/seg/chessboard_detection_results.txt", 
+        "/home/project/chess_board/cfg/point.txt", 
         "source_id_" + std::to_string(frame.frame_meta->source_id),
         frame_width, 
         frame_height
@@ -1760,13 +1760,16 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     cv::Mat transformed_image;
     cv::warpPerspective(rgba, transformed_image, perspective_matrix, cv::Size(500, 500));
 
+    // cv::imwrite("./output/transformed_frame.png", transformed_image);
+    // cv::Mat rgb_image;
+    // cv::cvtColor(transformed_image, transformed_image, cv::COLOR_BGRA2RGB);
+    // cv::imwrite("./output/rgb_frame.png", rgb_image);
     // Resize and copy back to GPU
     cv::resize(transformed_image, transformed_image, cv::Size(frame_width, frame_height));
+    // cv::cvtColor(transformed_image, transformed_image, cv::COLOR_RGBA2RGB);
     cudaMemcpy(in_surf->surfaceList[i].dataPtr, transformed_image.data, 
               transformed_image.total() * transformed_image.elemSize(), cudaMemcpyHostToDevice);
 
-
-    
     free(src_data);
     // delete src_data;
     // printf("---------------\n");

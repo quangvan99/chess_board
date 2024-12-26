@@ -1,9 +1,10 @@
 import cv2
 import threading
-from process import YOLOModel
-from yolo.xla import find_horizontal_vertical_lines_and_intersections
+from seg.process import YOLOModel
+from seg.yolo.xla import find_horizontal_vertical_lines_and_intersections
+from cfg.src import source
 
-lock = threading.Lock()  
+lock = threading.Lock()
 
 def update_result_file(result_file_path, source_id, video_path, corners=None, grid_points=None):
     with lock: 
@@ -20,7 +21,6 @@ def update_result_file(result_file_path, source_id, video_path, corners=None, gr
                 updated_lines.append(f"video_path = {video_path}\n")
                 if corners is not None and grid_points is not None:
                     formatted_corners = ', '.join([f"{int(coord)}" for corner in corners for coord in corner])
-                    # formatted_grid_points = ', '.join([f"{int(pt[0])}, {int(pt[1])}" for pt in grid_points])
                     updated_lines.append(f"corners = {formatted_corners}\n")
                     updated_lines.append(f"grid_points = [{grid_points}]\n\n")
                 else:
@@ -42,6 +42,7 @@ def update_result_file(result_file_path, source_id, video_path, corners=None, gr
         with open(result_file_path, "w") as result_file:
             result_file.writelines(updated_lines)
 
+
 def process_video(video_path, source_id, stop_event, result_file_path):
     yolo_model = YOLOModel()
     cap = cv2.VideoCapture(video_path)
@@ -50,6 +51,8 @@ def process_video(video_path, source_id, stop_event, result_file_path):
         return
 
     corners_found = False
+    grid_points_found = False
+    
     while cap.isOpened():
         if stop_event.is_set():
             print(f"Stopping video: {video_path}")
@@ -60,15 +63,22 @@ def process_video(video_path, source_id, stop_event, result_file_path):
             break
 
         corners, warped_image = yolo_model.detect_chessboard(frame)
+        
         if len(corners) > 0:
             grid_points = find_horizontal_vertical_lines_and_intersections(warped_image)
-            update_result_file(result_file_path, source_id, video_path, corners, grid_points)
-            stop_event.set() 
-            corners_found = True
-            break
-
-    if not corners_found:
+            
+            if grid_points is not None and len(grid_points) > 0:
+                update_result_file(result_file_path, source_id, video_path, corners, grid_points)
+                stop_event.set()
+                corners_found = True
+                grid_points_found = True
+                break
+            else:
+                print(f"Grid points not found yet in video: {video_path}")
+    
+    if not corners_found or not grid_points_found:
         update_result_file(result_file_path, source_id, video_path)
+
 
 def process_multiple_videos(video_paths, result_file_path):
     threads = []
@@ -91,7 +101,9 @@ def process_multiple_videos(video_paths, result_file_path):
     for thread in threads:
         thread.join()
 
+
 if __name__ == "__main__":
-    video_paths = ["../../videos/video1.mp4", "../../videos/lythaito.mp4", "../../videos/video2_cut.mp4", "../../videos/sample2.mp4"]
-    result_file_path = "chessboard_detection_results.txt"
+    video_paths = source["source"]["properties"]["urls"]
+    video_paths = [path.replace("file://", "") for path in video_paths]
+    result_file_path = "cfg/chessboard_detection_results.txt"
     process_multiple_videos(video_paths, result_file_path)

@@ -1,5 +1,5 @@
 import cv2
-from yolo.yoloseg import YOLOSeg
+from seg.yolo.yoloseg import YOLOSeg
 import numpy as np
 def warp_image(image, src_points, dst_size=(500, 500)):
     """
@@ -106,10 +106,10 @@ class YOLOModel:
     """Quản lý mô hình YOLO để phát hiện bàn cờ và quân cờ"""
     def __init__(self):
         self.aligner = YOLOSeg(
-            path= "weights/board_mask.onnx",
+            path= "seg/weights/board_mask.onnx",
             conf_thres = 0.95,
             iou_thres = 0.6,
-            use_gpu= True,
+            use_gpu= False,
             num_masks= 32
         )
     def detect_chessboard(self, frame):

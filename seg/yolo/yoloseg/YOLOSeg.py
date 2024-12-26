@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import onnxruntime
 
-from yolo.yoloseg.utils import xywh2xyxy, nms, draw_detections, sigmoid
+from seg.yolo.yoloseg.utils import xywh2xyxy, nms, draw_detections, sigmoid
 
 
 class YOLOSeg:
