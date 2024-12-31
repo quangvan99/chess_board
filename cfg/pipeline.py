@@ -23,9 +23,9 @@ for key in config['tracker']:
 sm = {"sm": {
         "plugin": "nvstreammux",
         "properties": {
-            "width": 1280,
-            "height": 1280,
-            "batch-size": 4,
+            "width": 640,
+            "height": 640,
+            "batch-size": 1,
             # "batched-push-timeout": 4000000,
             "nvbuf-memory-type": None
                     }
@@ -56,16 +56,16 @@ detection_tracking = {
         }
     },
 
-    # "nvtracker": {
-    #     "plugin": "nvtracker",
-    #     "properties": {
-    #         "tracker-width": tracker_width,
-    #         "tracker-height": tracker_height,
-    #         "gpu-id": tracker_gpu_id,
-    #         "ll-lib-file": tracker_ll_lib_file,
-    #         "ll-config-file": tracker_ll_config_file,
-    #     }
-    # },
+    "nvtracker": {
+        "plugin": "nvtracker",
+        "properties": {
+            "tracker-width": tracker_width,
+            "tracker-height": tracker_height,
+            "gpu-id": tracker_gpu_id,
+            "ll-lib-file": tracker_ll_lib_file,
+            "ll-config-file": tracker_ll_config_file,
+        }
+    },
     "nvvideoconvert2": {
         "plugin": "nvvideoconvert",
         "properties": {
@@ -75,10 +75,10 @@ detection_tracking = {
     "tiler": {
         "plugin": 'nvmultistreamtiler',
         "properties": {
-            "rows": 1,
-            "columns": 1,
-            "width": 500,
-            "height": 500,
+            "rows": 2,
+            "columns": 2,
+            "width": 640,
+            "height": 640,
         }
     },
 }
@@ -106,9 +106,9 @@ viz = {
         "properties": {
             'process-mode': 0,
             'display-text': 1,
-            # 'display_mask': True
+            'display-bbox': 0
         }
-    },
+    }
     # "nvdsosd": {
     #     "plugin": 'nvdsosd',
     #     "properties": {

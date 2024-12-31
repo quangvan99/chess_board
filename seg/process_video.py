@@ -18,16 +18,14 @@ def update_result_file(result_file_path, source_id, video_path, corners=None, gr
             if line.strip() == f"[source_id_{source_id}]":
                 found_source = True
                 updated_lines.append(line) 
-                updated_lines.append(f"video_path = {video_path}\n")
                 if corners is not None and grid_points is not None:
                     formatted_corners = ', '.join([f"{int(coord)}" for corner in corners for coord in corner])
                     updated_lines.append(f"corners = {formatted_corners}\n")
-                    updated_lines.append(f"grid_points = [{grid_points}]\n\n")
+                    formatted_grid_points = ', '.join([f"({x}, {y})" for x, y in grid_points])
+                    updated_lines.append(f"grid_points = {formatted_grid_points}\n\n")
                 else:
                     updated_lines.append(f"corners = None\n")
                     updated_lines.append(f"grid_points = None\n\n")
-            elif found_source and line.startswith("video_path"):
-                continue  
             elif found_source and (line.startswith("corners") or line.startswith("grid_points")):
                 continue  
             else:
@@ -50,34 +48,44 @@ def process_video(video_path, source_id, stop_event, result_file_path):
         print(f"Error: Could not open video file {video_path}")
         return
 
+    print(f"Started processing video {video_path} (source_id {source_id})")
+
     corners_found = False
     grid_points_found = False
     
     while cap.isOpened():
-        if stop_event.is_set():
-            print(f"Stopping video: {video_path}")
-            break
-
         ret, frame = cap.read()
         if not ret:
             break
 
         corners, warped_image = yolo_model.detect_chessboard(frame)
-        
         if len(corners) > 0:
-            grid_points = find_horizontal_vertical_lines_and_intersections(warped_image)
-            
+            warped_image = cv2.resize(warped_image, (500, 500))
+            grid_points, rotate_90 = find_horizontal_vertical_lines_and_intersections(warped_image)
+            scale_x = 640 / warped_image.shape[1]
+            scale_y = 640 / warped_image.shape[0]
+
             if grid_points is not None and len(grid_points) > 0:
+                grid_points = [(int(x * scale_x), int(y * scale_y)) for x, y in grid_points]
+            else:
+                print(f"Warning: No grid points found for video {video_path}")
+                grid_points = []
+
+            if rotate_90:
+                corners = [corners[3], corners[0], corners[1], corners[2]]
+
+            if len(grid_points) > 0:
                 update_result_file(result_file_path, source_id, video_path, corners, grid_points)
-                stop_event.set()
                 corners_found = True
                 grid_points_found = True
                 break
-            else:
-                print(f"Grid points not found yet in video: {video_path}")
-    
+
+    cap.release()
+
     if not corners_found or not grid_points_found:
         update_result_file(result_file_path, source_id, video_path)
+
+    print(f"Finished processing video {video_path} (source_id {source_id})")
 
 
 def process_multiple_videos(video_paths, result_file_path):

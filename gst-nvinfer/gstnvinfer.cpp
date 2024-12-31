@@ -1715,9 +1715,11 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     frame.input_surf_params = in_surf->surfaceList + i;
 
     printf("source_id %d \n", frame.frame_meta->source_id);
+    printf("source_frame_width %d \n", frame.frame_meta->source_frame_width);
     // std::vector<unsigned char> src_data(in_surf->surfaceList[i].dataSize);
     unsigned char *src_data = new unsigned char[in_surf->surfaceList[i].dataSize];
     // src_data = (unsigned char *)malloc(in_surf->surfaceList[i].dataSize);
+
   
     cudaMemcpy(src_data, in_surf->surfaceList[i].dataPtr, in_surf->surfaceList[i].dataSize, cudaMemcpyDeviceToHost);
     int frame_width = in_surf->surfaceList[i].width;
@@ -1727,7 +1729,7 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     cv::Mat rgba(frame_height, frame_width, CV_8UC4, src_data, frame_step);
     // cv::imwrite("./output/original_frame.png", rgba);
     std::map<std::string, std::vector<cv::Point2f>> points = readPointsFromConfig(
-        "/home/project/ds_chess/chess_board/cfg/point.txt", 
+        "/home/project/chess_board/cfg/chessboard_detection_results.txt", 
         "source_id_" + std::to_string(frame.frame_meta->source_id),
         frame_width, 
         frame_height
@@ -1750,29 +1752,31 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
 
     cv::Point2f dst[4] = {
         cv::Point2f(0, 0),
-        cv::Point2f(1280, 0),
-        cv::Point2f(1280, 1280),
-        cv::Point2f(0, 1280)
+        cv::Point2f(640, 0),
+        cv::Point2f(640, 640),
+        cv::Point2f(0, 640)
     };
 
     // Transform and apply perspective
     // Resize image to 1920x1080 before perspective transform
-    cv::Size target_size(1920, 1080);
+    cv::Size target_size(frame.frame_meta->source_frame_width, frame.frame_meta->source_frame_height);
     cv::Mat resized_image;
     cv::resize(rgba, resized_image, target_size, 0, 0, cv::INTER_LINEAR);
 
     // Now perform perspective transform on the resized image
     cv::Mat perspective_matrix = cv::getPerspectiveTransform(src, dst); 
     cv::Mat transformed_image;
-    cv::warpPerspective(resized_image, transformed_image, perspective_matrix, cv::Size(1280, 1280));
-
-    cv::imwrite("./output/transformed_frame.png", transformed_image);
+    cv::warpPerspective(resized_image, transformed_image, perspective_matrix, cv::Size(640, 640));
+    // cv::Mat rotated_image;
+    // cv::rotate(transformed_image, rotated_image, cv::ROTATE_90_CLOCKWISE);
+    // cv::imwrite("./output/transformed_frame.png", rotated_image);
     // cv::Mat rgb_image;
     // cv::cvtColor(transformed_image, transformed_image, cv::COLOR_BGRA2RGB);
     // cv::imwrite("./output/rgb_frame.png", rgb_image);
     // Resize and copy back to GPU
     // cv::resize(transformed_image, transformed_image, cv::Size(frame_width, frame_height));
     // cv::cvtColor(transformed_image, transformed_image, cv::COLOR_RGBA2RGB);
+    
     cudaMemcpy(in_surf->surfaceList[i].dataPtr, transformed_image.data, 
               transformed_image.total() * transformed_image.elemSize(), cudaMemcpyHostToDevice);
 

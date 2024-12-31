@@ -1,7 +1,33 @@
 import cv2
 import numpy as np
 from scipy.spatial import KDTree
+def sort_to_grid(grid_points, delta_y=20):
+    # Bước 1: Sắp xếp các điểm theo `y` trước, sau đó theo `x`
+    grid_points = sorted(grid_points, key=lambda p: (p[1], p[0]))
 
+    # Bước 2: Nhóm các điểm thành các hàng dựa trên `y`
+    rows = []
+    current_row = [grid_points[0]]
+
+    for i in range(1, len(grid_points)):
+        if abs(grid_points[i][1] - current_row[-1][1]) <= delta_y:
+            current_row.append(grid_points[i])
+        else:
+            # Sắp xếp từng hàng theo `x` trước khi thêm vào danh sách hàng
+            rows.append(sorted(current_row, key=lambda p: p[0]))
+            current_row = [grid_points[i]]
+    rows.append(sorted(current_row, key=lambda p: p[0]))
+
+    # Bước 3: Tạo ma trận 9x10
+    grid_matrix = []
+    for row in rows:
+        grid_matrix.append(row)
+    
+    # Kiểm tra độ dài của từng hàng
+    if len(grid_matrix) != 10 or any(len(row) != 9 for row in grid_matrix):
+        raise ValueError("Dữ liệu không thể sắp xếp thành ma trận 9x10.")
+
+    return grid_matrix
 def filter_close_points(points, distance_threshold=20):
     """ 
     Hàm lọc các điểm gần nhau dựa vào ngưỡng khoảng cách, giữ lại trung bình của những điểm gần nhau.
@@ -183,8 +209,11 @@ def find_horizontal_vertical_lines_and_intersections(image):
     expanded_grid_points = filter_close_points_optimized(expanded_grid_points)
 
     if len(expanded_grid_points) != 90:
-        return None
-    return expanded_grid_points
+        return None, False
+    else:
+        expanded_grid_points = sort_to_grid(expanded_grid_points)
+        flat_grid_points = [point for row in expanded_grid_points for point in row]
+    return flat_grid_points, rotate_90
 
 def find_intersections(h_lines, v_lines):
     intersections = []
