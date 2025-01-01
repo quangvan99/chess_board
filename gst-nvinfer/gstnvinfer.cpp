@@ -1752,9 +1752,9 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
 
     cv::Point2f dst[4] = {
         cv::Point2f(0, 0),
-        cv::Point2f(640, 0),
-        cv::Point2f(640, 640),
-        cv::Point2f(0, 640)
+        cv::Point2f(1280, 0),
+        cv::Point2f(1280, 1280),
+        cv::Point2f(0, 1280)
     };
 
     // Transform and apply perspective
@@ -1766,7 +1766,7 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     // Now perform perspective transform on the resized image
     cv::Mat perspective_matrix = cv::getPerspectiveTransform(src, dst); 
     cv::Mat transformed_image;
-    cv::warpPerspective(resized_image, transformed_image, perspective_matrix, cv::Size(640, 640));
+    cv::warpPerspective(resized_image, transformed_image, perspective_matrix, cv::Size(1280, 1280));
     // cv::Mat rotated_image;
     // cv::rotate(transformed_image, rotated_image, cv::ROTATE_90_CLOCKWISE);
     // cv::imwrite("./output/transformed_frame.png", rotated_image);

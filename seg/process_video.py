@@ -62,8 +62,8 @@ def process_video(video_path, source_id, stop_event, result_file_path):
         if len(corners) > 0:
             warped_image = cv2.resize(warped_image, (500, 500))
             grid_points, rotate_90 = find_horizontal_vertical_lines_and_intersections(warped_image)
-            scale_x = 640 / warped_image.shape[1]
-            scale_y = 640 / warped_image.shape[0]
+            scale_x = 1280 / warped_image.shape[1]
+            scale_y = 1280 / warped_image.shape[0]
 
             if grid_points is not None and len(grid_points) > 0:
                 grid_points = [(int(x * scale_x), int(y * scale_y)) for x, y in grid_points]
@@ -72,7 +72,7 @@ def process_video(video_path, source_id, stop_event, result_file_path):
                 grid_points = []
 
             if rotate_90:
-                corners = [corners[3], corners[0], corners[1], corners[2]]
+                corners = [ corners[1], corners[2], corners[3], corners[0] ]
 
             if len(grid_points) > 0:
                 update_result_file(result_file_path, source_id, video_path, corners, grid_points)

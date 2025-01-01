@@ -13,6 +13,7 @@ from det.ops import PERF_DATA
 import cv2
 import configparser
 import ast
+from game.simple_engine.simple_engine import SimpleEngine
 # Fix bug deepstream 7.0
 os.system("rm -rf ~/.cache/gstreamer-1.0/registry.x86_64.bin")
 class BoardStateBuffer:
@@ -26,35 +27,43 @@ class BoardStateBuffer:
         self.board_buffer.append(board)
         if len(self.board_buffer) > self.buffer_size:
             self.board_buffer.pop(0)
-            
-    def get_stable_board(self, confidence_threshold=0.7):
+                
+    def get_stable_board(self, confidence_threshold=0.7, labels=None):
         """
         Tính toán board state ổn định từ buffer
         Returns: board state nếu đủ độ tin cậy, None nếu chưa
         """
         if len(self.board_buffer) < self.buffer_size:
             return None
-            
+
+        if labels is None:
+            raise ValueError("Danh sách nhãn (labels) phải được cung cấp.")
+
         height, width = self.board_buffer[0].shape
-        probability_board = np.zeros((height, width, 14))  
-        
+        probability_board = {label: np.zeros((height, width)) for label in labels}
+
         for board in self.board_buffer:
             for i in range(height):
                 for j in range(width):
-                    class_id = board[i][j]
-                    if class_id != "O":
-                        probability_board[i, j, int(class_id)] += 1
-                        
-        probability_board /= self.buffer_size
-        
-        new_board = np.full((height, width), "O", dtype=object)
+                    label = board[i][j]
+                    if label in labels:
+                        probability_board[label][i, j] += 1
+
+        for label in labels:
+            probability_board[label] /= self.buffer_size
+
+        new_board = np.full((height, width), "", dtype=object)
         for i in range(height):
             for j in range(width):
-                max_prob = np.max(probability_board[i, j])
+                max_prob = 0
+                selected_label = ""
+                for label, prob_matrix in probability_board.items():
+                    if prob_matrix[i, j] > max_prob:
+                        max_prob = prob_matrix[i, j]
+                        selected_label = label
                 if max_prob >= confidence_threshold:
-                    class_id = np.argmax(probability_board[i, j])
-                    new_board[i, j] = str(class_id)
-                    
+                    new_board[i, j] = selected_label
+
         return new_board
 
 class MoveRecorder:
@@ -62,14 +71,15 @@ class MoveRecorder:
     def __init__(self):
         self.previous_board = None
         self.move_history = []
-        self.board_buffer = BoardStateBuffer(buffer_size=20)
-
+        self.board_buffer = BoardStateBuffer(buffer_size=10)
+        self.simple_engine = SimpleEngine(None)
     def record_move(self, current_board):
         # Thêm board hiện tại vào buffer
         self.board_buffer.add_board(current_board)
         
         # Lấy board ổn định từ buffer
-        stable_board = self.board_buffer.get_stable_board()
+        labels_list = ["rk", "ra", "rb", "rr", "rc", "rn", "rp", "bk", "ba", "bb", "br", "bc", "bn", "bp"]
+        stable_board = self.board_buffer.get_stable_board(0.7 ,labels_list)
         if stable_board is None:
             return None
             
@@ -84,7 +94,14 @@ class MoveRecorder:
             
         move = self.detect_move_with_capture(self.previous_board, stable_board)
         if move:
-            self.previous_board = stable_board
+            to_pos, from_pos, piece = move
+            print(f"Detected move: {piece} from {from_pos} to {to_pos}")
+            if self.simple_engine.move(self.previous_board, from_pos, to_pos):
+                stable_board[to_pos[0], to_pos[1]] = piece
+                self.previous_board = stable_board
+            else:
+                print("Invalid move, keeping the old state.")
+                return None
             
         return move
 
@@ -134,12 +151,12 @@ class MoveRecorder:
                 new_piece = new_board[i][j]
 
                 if old_piece != new_piece:
-                    if old_piece != 'O' and new_piece == 'O':
+                    if old_piece != '' and new_piece == '':
                         start_position = (i, j)
                         moved_piece = old_piece
-                    elif old_piece == 'O' and new_piece != 'O':
+                    elif old_piece == '' and new_piece != '':
                         end_position = (i, j)
-                    elif old_piece != 'O' and new_piece != 'O' and old_piece[0] != new_piece[0]:
+                    elif old_piece != '' and new_piece != '' and old_piece[0] != new_piece[0]:
                         # start_position = (i, j)
                         end_position = (i, j)
                         captured_piece = old_piece
@@ -288,7 +305,8 @@ class BasePipeline:
                 try:
                     obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
                     objects.append(obj_meta)
-                    # obj_meta.text_params.display_text = f"{obj_meta.class_id}:{obj_meta.confidence*100:.0f}"
+                    obj_meta.text_params.display_text = f"{obj_meta.class_id}:{obj_meta.confidence*100:.0f}"
+
                 except StopIteration:
                     break
 
@@ -296,99 +314,100 @@ class BasePipeline:
                     l_obj = l_obj.next
                 except StopIteration:
                     break
+            try:
+                stream_index = f"stream{source_id}"
+                self.perf_data.update_fps(stream_index)
 
-            stream_index = f"stream{source_id}"
-            self.perf_data.update_fps(stream_index)
+                xc_yc_list = self.read_grid_points(self.config_point_path, 
+                                                f"source_id_{source_id}", 
+                                                "grid_points")
 
-            xc_yc_list = self.read_grid_points(self.config_point_path, 
-                                             f"source_id_{source_id}", 
-                                             "grid_points")
+                if xc_yc_list is not None and len(xc_yc_list) > 0:
+                    board = []
+                    for rect in xc_yc_list:
+                        is_inside_bbox = False
+                        x_center, y_center = rect
+                        for obj in objects:
+                            rect_params = obj.rect_params
+                            if (rect_params.left < x_center < rect_params.left + rect_params.width and 
+                                rect_params.top < y_center < rect_params.top + rect_params.height):
+                                class_id = obj.class_id
+                                class_name = obj.obj_label
+                                is_inside_bbox = True
+                                break
+                        board.append(class_name if is_inside_bbox else "")
 
-            if xc_yc_list is not None and len(xc_yc_list) > 0:
-                board = []
-                for rect in xc_yc_list:
-                    is_inside_bbox = False
-                    x_center, y_center = rect
-                    for obj in objects:
-                        rect_params = obj.rect_params
-                        if (rect_params.left < x_center < rect_params.left + rect_params.width and 
-                            rect_params.top < y_center < rect_params.top + rect_params.height):
-                            class_id = obj.class_id
-                            is_inside_bbox = True
-                            break
-                    board.append(class_id if is_inside_bbox else "O")
+                    board = np.array(board).reshape(10, 9)
+                    state.current_arrow = state.move_record.record_move(board)
+                    # print("previous_board", state.move_record.previous_board)
+                    # print("current_board", board)
+                    
+                    if state.current_arrow is not None:
+                        
+                        start_pos, end_pos, text = state.current_arrow
+                        start_pos = (xc_yc_list[start_pos[0] * 9 + start_pos[1]])
+                        end_pos = (xc_yc_list[end_pos[0] * 9 + end_pos[1]])
+                        state.previous_arrow = state.current_arrow
+                        state.arrow_source_id = source_id  
+                    elif state.previous_arrow is not None and state.arrow_source_id == source_id:
+                        print("***********************************************************************************************************")
+                        print("previous_arrow", state.previous_arrow)
+                        print("current_arrow", state.current_arrow)
+                        start_pos, end_pos, text = state.previous_arrow
+                        start_pos = (xc_yc_list[start_pos[0] * 9 + start_pos[1]])
+                        end_pos = (xc_yc_list[end_pos[0] * 9 + end_pos[1]])
 
-                board = np.array(board).reshape(10, 9)
-                state.current_arrow = state.move_record.record_move(board)
-                # print("previous_board", state.move_record.previous_board)
-                # print("current_board", board)
-                
-                if state.current_arrow is not None:
-                    
-                    start_pos, end_pos, text = state.current_arrow
-                    start_pos = (xc_yc_list[start_pos[0] * 9 + start_pos[1]])
-                    end_pos = (xc_yc_list[end_pos[0] * 9 + end_pos[1]])
-                    state.previous_arrow = state.current_arrow
-                    state.arrow_source_id = source_id  
-                elif state.previous_arrow is not None and state.arrow_source_id == source_id:
-                    print("***********************************************************************************************************")
-                    print("previous_arrow", state.previous_arrow)
-                    print("current_arrow", state.current_arrow)
-                    start_pos, end_pos, text = state.previous_arrow
-                    start_pos = (xc_yc_list[start_pos[0] * 9 + start_pos[1]])
-                    end_pos = (xc_yc_list[end_pos[0] * 9 + end_pos[1]])
+                    if ('start_pos' in locals() and 'end_pos' in locals() and 
+                        state.arrow_source_id == source_id):
+                        display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+                        
+                        display_meta.num_arrows = 1
+                        display_meta.arrow_params[0].x1 = start_pos[0]
+                        display_meta.arrow_params[0].y1 = start_pos[1] 
+                        display_meta.arrow_params[0].x2 = end_pos[0]
+                        display_meta.arrow_params[0].y2 = end_pos[1]
+                        display_meta.arrow_params[0].arrow_width = 4 
+                        display_meta.arrow_params[0].arrow_head = pyds.NvOSD_Arrow_Head_Direction.START_HEAD  
+                        display_meta.arrow_params[0].arrow_color.set(1.0, 1.0, 1.0, 0.8)
+                        
+                        display_meta.num_circles = 4  
+                        
+                        display_meta.circle_params[0].xc = start_pos[0]
+                        display_meta.circle_params[0].yc = start_pos[1]
+                        display_meta.circle_params[0].radius = 25 
+                        display_meta.circle_params[0].circle_color.set(0.0, 1.0, 0.0, 0.3)
+                        
+                        display_meta.circle_params[1].xc = start_pos[0]
+                        display_meta.circle_params[1].yc = start_pos[1]
+                        display_meta.circle_params[1].radius = 15 
+                        display_meta.circle_params[1].circle_color.set(0.0, 1.0, 0.0, 0.8)
+                        
+                        display_meta.circle_params[2].xc = end_pos[0]
+                        display_meta.circle_params[2].yc = end_pos[1]
+                        display_meta.circle_params[2].radius = 25 
+                        display_meta.circle_params[2].circle_color.set(1.0, 0.0, 0.0, 0.3)
+                        
+                        display_meta.circle_params[3].xc = end_pos[0]
+                        display_meta.circle_params[3].yc = end_pos[1]
+                        display_meta.circle_params[3].radius = 15 
+                        display_meta.circle_params[3].circle_color.set(1.0, 0.0, 0.0, 0.8)
 
-                if ('start_pos' in locals() and 'end_pos' in locals() and 
-                    state.arrow_source_id == source_id):
-                    display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
-                    
-                    display_meta.num_arrows = 1
-                    display_meta.arrow_params[0].x1 = start_pos[0]
-                    display_meta.arrow_params[0].y1 = start_pos[1] 
-                    display_meta.arrow_params[0].x2 = end_pos[0]
-                    display_meta.arrow_params[0].y2 = end_pos[1]
-                    display_meta.arrow_params[0].arrow_width = 4 
-                    display_meta.arrow_params[0].arrow_head = pyds.NvOSD_Arrow_Head_Direction.START_HEAD  
-                    display_meta.arrow_params[0].arrow_color.set(1.0, 1.0, 1.0, 0.8)
-                    
-                    display_meta.num_circles = 4  
-                    
-                    display_meta.circle_params[0].xc = start_pos[0]
-                    display_meta.circle_params[0].yc = start_pos[1]
-                    display_meta.circle_params[0].radius = 25 
-                    display_meta.circle_params[0].circle_color.set(0.0, 1.0, 0.0, 0.3)
-                    
-                    display_meta.circle_params[1].xc = start_pos[0]
-                    display_meta.circle_params[1].yc = start_pos[1]
-                    display_meta.circle_params[1].radius = 15 
-                    display_meta.circle_params[1].circle_color.set(0.0, 1.0, 0.0, 0.8)
-                    
-                    display_meta.circle_params[2].xc = end_pos[0]
-                    display_meta.circle_params[2].yc = end_pos[1]
-                    display_meta.circle_params[2].radius = 25 
-                    display_meta.circle_params[2].circle_color.set(1.0, 0.0, 0.0, 0.3)
-                    
-                    display_meta.circle_params[3].xc = end_pos[0]
-                    display_meta.circle_params[3].yc = end_pos[1]
-                    display_meta.circle_params[3].radius = 15 
-                    display_meta.circle_params[3].circle_color.set(1.0, 0.0, 0.0, 0.8)
+                        display_meta.num_labels = 2
+                        
+                        display_meta.text_params[0].display_text = "End"
+                        display_meta.text_params[0].x_offset = start_pos[0] - 20
+                        display_meta.text_params[0].y_offset = start_pos[1] - 35
+                        display_meta.text_params[0].font_params.font_size = 14
+                        display_meta.text_params[0].font_params.font_color.set(0.0, 1.0, 0.0, 1.0)
+                        
+                        display_meta.text_params[1].display_text = "Start"
+                        display_meta.text_params[1].x_offset = end_pos[0] - 20
+                        display_meta.text_params[1].y_offset = end_pos[1] - 35
+                        display_meta.text_params[1].font_params.font_size = 14
+                        display_meta.text_params[1].font_params.font_color.set(1.0, 0.0, 0.0, 1.0)
+                        
 
-                    display_meta.num_labels = 2
-                    
-                    display_meta.text_params[0].display_text = "End"
-                    display_meta.text_params[0].x_offset = start_pos[0] - 20
-                    display_meta.text_params[0].y_offset = start_pos[1] - 35
-                    display_meta.text_params[0].font_params.font_size = 14
-                    display_meta.text_params[0].font_params.font_color.set(0.0, 1.0, 0.0, 1.0)
-                    
-                    display_meta.text_params[1].display_text = "Start"
-                    display_meta.text_params[1].x_offset = end_pos[0] - 20
-                    display_meta.text_params[1].y_offset = end_pos[1] - 35
-                    display_meta.text_params[1].font_params.font_size = 14
-                    display_meta.text_params[1].font_params.font_color.set(1.0, 0.0, 0.0, 1.0)
-                    
-
-                    pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
+                        pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
 
                 # # Vẽ grid points chỉ cho source_id hiện tại
                 # MAX_CIRCLES = 16
@@ -407,7 +426,8 @@ class BasePipeline:
                 #     display_meta.circle_params[i].circle_color.alpha = 1.0
 
                 # pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
-
+            except StopIteration:
+                break
             try:
                 l_frame = l_frame.next
             except StopIteration:
