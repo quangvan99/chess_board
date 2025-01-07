@@ -101,12 +101,15 @@ viz = {
             "nvbuf-memory-type": None
         }
     },
-    "nvdsosd": {
-        "plugin": 'nvdsosd',
+    "nvosdpadding": {
+        "plugin": 'nvosdpadding',
         "properties": {
             'process-mode': 0,
             'display-text': 1,
-            'display-bbox': 0
+            'display-bbox': 0,
+            'enable-padding': True,  
+            'padding-size': 500,      
+            'padding-color': "255,255,255,255"  
         }
     }
     # "nvdsosd": {
