@@ -8,26 +8,27 @@
 # license agreement from NVIDIA Corporation is strictly prohibited.
 #################################################################################
 
-CUDA_VER?=12.2
+CUDA_VER?=
 ifeq ($(CUDA_VER),)
   $(error "CUDA_VER is not set")
 endif
 
-CXX:= gcc
-SRCS:= gstnvosdpadding.c
+CXX:= g++
+SRCS:= gstnvosdpadding.cpp
 INCS:= gstnvosdpadding.h
 LIB:=libgstnvosdpadding.so
 
 TARGET_DEVICE = $(shell gcc -dumpmachine | cut -f1 -d -)
 
 NVDS_VERSION:=7.0
-
+CFLAGS+=-I/usr/include/opencv4
 GST_INSTALL_DIR?=/opt/nvidia/deepstream/deepstream-$(NVDS_VERSION)/lib/gst-plugins/
 LIB_INSTALL_DIR?=/opt/nvidia/deepstream/deepstream-$(NVDS_VERSION)/lib/
 
-CFLAGS+= -fPIC -DDS_VERSION=\"7.0.0\" \
+CFLAGS+= -fPIC -std=c++11 -DDS_VERSION=\"7.0.0\" \
 	 -I../../includes \
 	 -I/usr/local/cuda-$(CUDA_VER)/include \
+	 -I /opt/nvidia/deepstream/deepstream-7.0/sources/includes/ \
 
 ifeq ($(TARGET_DEVICE),aarch64)
   CFLAGS+= -DPLATFORM_TEGRA
@@ -40,15 +41,15 @@ LIBS+= -L$(LIB_INSTALL_DIR) -lnvdsgst_helper -lnvdsgst_meta -lnvds_meta \
        -lnvds_osd -lnvbufsurface -lnvbufsurftransform -lnvdsgst_customhelper -ldl -lpthread \
        -Wl,-rpath,$(LIB_INSTALL_DIR)
 
-OBJS:= $(SRCS:.c=.o)
+OBJS:= $(SRCS:.cpp=.o)
 
-PKGS:= gstreamer-1.0 gstreamer-base-1.0 gstreamer-video-1.0
-CFLAGS+= $(shell pkg-config --cflags $(PKGS))
-LIBS+= $(shell pkg-config --libs $(PKGS))
+PKGS:= gstreamer-1.0 gstreamer-base-1.0 gstreamer-video-1.0 /usr/lib/x86_64-linux-gnu/pkgconfig/opencv4.pc
+CFLAGS+=$(shell pkg-config --cflags $(PKGS))
+LIBS+=$(shell pkg-config --libs $(PKGS))
 
 all: $(LIB)
 
-%.o: %.c $(INCS) Makefile
+%.o: %.cpp $(INCS) Makefile
 	@echo $(CFLAGS)
 	$(CXX) -c -o $@ $(CFLAGS) $<
 

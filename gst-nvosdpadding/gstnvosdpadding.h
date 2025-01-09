@@ -17,9 +17,10 @@
 #include <gst/video/video.h>
 #include <gst/video/gstvideofilter.h>
 #include <stdlib.h>
-#include "nvll_osd_api.h"
-#include "gstnvdsmeta.h"
-
+#include <nvll_osd_api.h>
+#include <gstnvdsmeta.h>
+// #include <opencv2/opencv.hpp>
+// #include <opencv2/imgproc/types_c.h>
 #define MAX_BG_CLR 20
 
 G_BEGIN_DECLS

@@ -53,6 +53,7 @@ LIBS+=$(shell pkg-config --libs $(PKGS))
 all: $(LIB)
 
 %.o: %.cpp $(INCS) Makefile
+	@echo $(CFLAGS)
 	$(CXX) -c -o $@ $(CFLAGS) $<
 
 $(LIB): $(OBJS) $(DEP) Makefile

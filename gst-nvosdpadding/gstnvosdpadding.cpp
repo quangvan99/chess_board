@@ -19,10 +19,12 @@
 #include "gstnvosdpadding.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <opencv2/opencv.hpp>
+#include <opencv2/imgproc/types_c.h>
 
-#include "nvbufsurface.h"
-#include "nvtx3/nvToolsExt.h"
-#include "gst-nvdscustomevent.h"
+#include <nvbufsurface.h>
+#include <nvtx3/nvToolsExt.h>
+#include <gst-nvdscustomevent.h>
 GST_DEBUG_CATEGORY_STATIC (GST_NVOSDPADDING_debug);
 #define GST_CAT_DEFAULT GST_NVOSDPADDING_debug
 
@@ -209,8 +211,8 @@ GST_NVOSDPADDING_set_caps (GstBaseTransform * trans, GstCaps * incaps,
   GST_OBJECT_LOCK (nvosdpadding);
   if (!gst_structure_get_int (structure, "width", &width) ||
       !gst_structure_get_int (structure, "height", &height)) {
-    GST_ELEMENT_ERROR (nvosdpadding, STREAM, FAILED,
-        ("caps without width/height"), NULL);
+    // GST_ELEMENT_ERROR (nvosdpadding, STREAM, FAILED,
+    //     ("caps without width/height"), NULL);
     ret = FALSE;
     goto exit_set_caps;
   }
@@ -222,8 +224,8 @@ GST_NVOSDPADDING_set_caps (GstBaseTransform * trans, GstCaps * incaps,
   CUerr = cudaSetDevice (nvosdpadding->gpu_id);
   if (CUerr != cudaSuccess) {
     ret = FALSE;
-    GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-        ("Unable to set device"), NULL);
+    // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+    //     ("Unable to set device"), NULL);
     goto exit_set_caps;
   }
 
@@ -254,8 +256,8 @@ GST_NVOSDPADDING_start (GstBaseTransform * btrans)
   cudaError_t CUerr = cudaSuccess;
   CUerr = cudaSetDevice (nvosdpadding->gpu_id);
   if (CUerr != cudaSuccess) {
-    GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-        ("Unable to set device"), NULL);
+    // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+    //     ("Unable to set device"), NULL);
     return FALSE;
   }
   GST_LOG_OBJECT (nvosdpadding, "SETTING CUDA DEVICE = %d in nvosdpadding func=%s\n",
@@ -264,8 +266,8 @@ GST_NVOSDPADDING_start (GstBaseTransform * btrans)
   nvosdpadding->nvosdpadding_context = nvll_osd_create_context ();
 
   if (nvosdpadding->nvosdpadding_context == NULL) {
-    GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-        ("Unable to create context nvosdpadding"), NULL);
+    // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+    //     ("Unable to create context nvosdpadding"), NULL);
     return FALSE;
   }
 
@@ -296,8 +298,8 @@ GST_NVOSDPADDING_stop (GstBaseTransform * btrans)
   cudaError_t CUerr = cudaSuccess;
   CUerr = cudaSetDevice (nvosdpadding->gpu_id);
   if (CUerr != cudaSuccess) {
-    GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-        ("Unable to set device"), NULL);
+    // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+    //     ("Unable to set device"), NULL);
     return FALSE;
   }
   GST_LOG_OBJECT (nvosdpadding, "SETTING CUDA DEVICE = %d in nvosdpadding func=%s\n",
@@ -336,8 +338,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
   NvDsBatchMeta *batch_meta = NULL;
 
   if (!gst_buffer_map (buf, &inmap, GST_MAP_READ)) {
-    GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-        ("Unable to map info from buffer"), NULL);
+    // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+    //     ("Unable to map info from buffer"), NULL);
     return GST_FLOW_ERROR;
   }
 
@@ -346,8 +348,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
   cudaError_t CUerr = cudaSuccess;
   CUerr = cudaSetDevice (nvosdpadding->gpu_id);
   if (CUerr != cudaSuccess) {
-    GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-        ("Unable to set device"), NULL);
+    // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+    //     ("Unable to set device"), NULL);
     return GST_FLOW_ERROR;
   }
   GST_LOG_OBJECT (nvosdpadding, "SETTING CUDA DEVICE = %d in nvosdpadding func=%s\n",
@@ -384,6 +386,22 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
       nvosdpadding->rect_params[rect_cnt] = object_meta->rect_params;
       rect_cnt++;
     }
+    // printf("*******************************************test");
+    // printf("enable_padding: %d, padding_size: %d\n", nvosdpadding->enable_padding, nvosdpadding->padding_size);
+    if (nvosdpadding->enable_padding && nvosdpadding->padding_size > 0) {
+        printf("*******************************************test\n");
+      unsigned char *src_data = new unsigned char[surface->surfaceList[i].dataSize];
+
+      cudaMemcpy(src_data, surface->surfaceList[i].dataPtr, surface->surfaceList[i].dataSize, cudaMemcpyDeviceToHost);
+      int frame_width = surface->surfaceList[i].width;
+      int frame_height = surface->surfaceList[i].height;
+      size_t frame_step = surface->surfaceList[i].pitch;
+
+      cv::Mat rgba(frame_height, frame_width, CV_8UC4, src_data, frame_step);
+      cv::imwrite("./output/original_frame_padding.png", rgba);
+    }
+
+
     if (rect_cnt == MAX_OSD_ELEMS) {
       nvosdpadding->frame_rect_params->num_rects = rect_cnt;
       nvosdpadding->frame_rect_params->rect_params_list = nvosdpadding->rect_params;
@@ -393,8 +411,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
       nvosdpadding->frame_rect_params->surf = surface;
       if (nvll_osd_draw_rectangles (nvosdpadding->nvosdpadding_context,
               nvosdpadding->frame_rect_params) == -1) {
-        GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-            ("Unable to draw rectangles"), NULL);
+        // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+        //     ("Unable to draw rectangles"), NULL);
         return GST_FLOW_ERROR;
       }
       rect_cnt = 0;
@@ -414,8 +432,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
         nvosdpadding->frame_mask_params->surf = surface;
         if (nvll_osd_draw_segment_masks (nvosdpadding->nvosdpadding_context,
                 nvosdpadding->frame_mask_params) == -1) {
-          GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-              ("Unable to draw rectangles"), NULL);
+          // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+          //     ("Unable to draw rectangles"), NULL);
           return GST_FLOW_ERROR;
         }
         segment_cnt = 0;
@@ -432,8 +450,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
       nvosdpadding->frame_rect_params->surf = surface;
       if (nvll_osd_put_text (nvosdpadding->nvosdpadding_context,
               nvosdpadding->frame_text_params) == -1) {
-        GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-            ("Unable to draw text"), NULL);
+        // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+        //     ("Unable to draw text"), NULL);
         return GST_FLOW_ERROR;
       }
       text_cnt = 0;
@@ -463,8 +481,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
         nvosdpadding->frame_rect_params->surf = surface;
         if (nvll_osd_draw_rectangles (nvosdpadding->nvosdpadding_context,
                 nvosdpadding->frame_rect_params) == -1) {
-          GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-              ("Unable to draw rectangles"), NULL);
+          // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+          //     ("Unable to draw rectangles"), NULL);
           return GST_FLOW_ERROR;
         }
         rect_cnt = 0;
@@ -483,8 +501,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
           nvosdpadding->frame_text_params->surf = surface;
           if (nvll_osd_put_text (nvosdpadding->nvosdpadding_context,
                   nvosdpadding->frame_text_params) == -1) {
-            GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-                ("Unable to draw text"), NULL);
+            // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+            //     ("Unable to draw text"), NULL);
             return GST_FLOW_ERROR;
           }
           text_cnt = 0;
@@ -503,8 +521,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
         nvosdpadding->frame_line_params->surf = surface;
         if (nvll_osd_draw_lines (nvosdpadding->nvosdpadding_context,
                 nvosdpadding->frame_line_params) == -1) {
-          GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-              ("Unable to draw lines"), NULL);
+          // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+          //     ("Unable to draw lines"), NULL);
           return GST_FLOW_ERROR;
         }
         line_cnt = 0;
@@ -522,8 +540,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
         nvosdpadding->frame_arrow_params->surf = surface;
         if (nvll_osd_draw_arrows (nvosdpadding->nvosdpadding_context,
                 nvosdpadding->frame_arrow_params) == -1) {
-          GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-              ("Unable to draw arrows"), NULL);
+          // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+          //     ("Unable to draw arrows"), NULL);
           return GST_FLOW_ERROR;
         }
         arrow_cnt = 0;
@@ -542,8 +560,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
         nvosdpadding->frame_circle_params->surf = surface;
         if (nvll_osd_draw_circles (nvosdpadding->nvosdpadding_context,
                 nvosdpadding->frame_circle_params) == -1) {
-          GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-              ("Unable to draw circles"), NULL);
+          // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+          //     ("Unable to draw circles"), NULL);
           return GST_FLOW_ERROR;
         }
         circle_cnt = 0;
@@ -567,8 +585,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     nvosdpadding->frame_rect_params->surf = surface;
     if (nvll_osd_draw_rectangles (nvosdpadding->nvosdpadding_context,
             nvosdpadding->frame_rect_params) == -1) {
-      GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-          ("Unable to draw rectangles"), NULL);
+      // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+      //     ("Unable to draw rectangles"), NULL);
       return GST_FLOW_ERROR;
     }
   }
@@ -583,8 +601,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     nvosdpadding->frame_mask_params->surf = surface;
     if (nvll_osd_draw_segment_masks (nvosdpadding->nvosdpadding_context,
             nvosdpadding->frame_mask_params) == -1) {
-      GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-          ("Unable to draw segment masks"), NULL);
+      // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+      //     ("Unable to draw segment masks"), NULL);
       return GST_FLOW_ERROR;
     }
   }
@@ -598,8 +616,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     nvosdpadding->frame_text_params->surf = surface;
     if (nvll_osd_put_text (nvosdpadding->nvosdpadding_context,
             nvosdpadding->frame_text_params) == -1) {
-      GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED, ("Unable to draw text"),
-          NULL);
+      // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED, ("Unable to draw text"),
+      //     NULL);
       return GST_FLOW_ERROR;
     }
   }
@@ -613,8 +631,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     nvosdpadding->frame_line_params->surf = surface;
     if (nvll_osd_draw_lines (nvosdpadding->nvosdpadding_context,
             nvosdpadding->frame_line_params) == -1) {
-      GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED, ("Unable to draw lines"),
-          NULL);
+      // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED, ("Unable to draw lines"),
+      //     NULL);
       return GST_FLOW_ERROR;
     }
   }
@@ -628,8 +646,8 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     nvosdpadding->frame_arrow_params->surf = surface;
     if (nvll_osd_draw_arrows (nvosdpadding->nvosdpadding_context,
             nvosdpadding->frame_arrow_params) == -1) {
-      GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-          ("Unable to draw arrows"), NULL);
+      // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+      //     ("Unable to draw arrows"), NULL);
       return GST_FLOW_ERROR;
     }
   }
@@ -643,16 +661,16 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     nvosdpadding->frame_circle_params->surf = surface;
     if (nvll_osd_draw_circles (nvosdpadding->nvosdpadding_context,
             nvosdpadding->frame_circle_params) == -1) {
-      GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-          ("Unable to draw circles"), NULL);
+      // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+      //     ("Unable to draw circles"), NULL);
       return GST_FLOW_ERROR;
     }
   }
 
   if (nvosdpadding->nvosdpadding_mode == MODE_GPU) {
     if (nvll_osd_apply (nvosdpadding->nvosdpadding_context, NULL, surface) == -1) {
-      GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-          ("Unable to draw shapes onto video frame by GPU"), NULL);
+      // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
+      //     ("Unable to draw shapes onto video frame by GPU"), NULL);
       return GST_FLOW_ERROR;
     }
   }
@@ -727,22 +745,22 @@ GST_NVOSDPADDING_class_init (GstNvOsdPaddingClass * klass)
 
   g_object_class_install_property (gobject_class, PROP_PADDING_SIZE,
       g_param_spec_uint ("padding-size", "Padding Size",
-          "Size of padding to add around the frame",
+          "Size of padding to add around the frame", 
           0, G_MAXUINT, DEFAULT_PADDING_SIZE,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
-          GST_PARAM_MUTABLE_READY));
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+          GST_PARAM_MUTABLE_READY)));
 
   g_object_class_install_property (gobject_class, PROP_ENABLE_PADDING,
       g_param_spec_boolean ("enable-padding", "Enable Padding",
           "Enable padding with background color",
           DEFAULT_ENABLE_PADDING,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   g_object_class_install_property (gobject_class, PROP_PADDING_COLOR,
       g_param_spec_string ("padding-color", "Padding Color",
           "RGBA padding color (format: R,G,B,A)",
           "255,255,255,255",
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   g_object_class_install_property (gobject_class, PROP_SHOW_CLOCK,
       g_param_spec_boolean ("display-clock", "clock",
@@ -764,50 +782,50 @@ GST_NVOSDPADDING_class_init (GstNvOsdPaddingClass * klass)
       g_param_spec_string ("clock-font", "clock-font",
           "Clock Font to be set",
           "DEFAULT_FONT",
-          (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   g_object_class_install_property (gobject_class, PROP_CLOCK_FONT_SIZE,
       g_param_spec_uint ("clock-font-size", "clock-font-size",
           "font size of the clock",
           0, MAX_FONT_SIZE, DEFAULT_FONT_SIZE,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
-          GST_PARAM_MUTABLE_READY));
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+          GST_PARAM_MUTABLE_READY)));
 
   g_object_class_install_property (gobject_class, PROP_CLOCK_X_OFFSET,
       g_param_spec_uint ("x-clock-offset", "x-clock-offset",
           "x-clock-offset",
           0, G_MAXUINT, 0,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
-          GST_PARAM_MUTABLE_READY));
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+          GST_PARAM_MUTABLE_READY)));
 
   g_object_class_install_property (gobject_class, PROP_CLOCK_Y_OFFSET,
       g_param_spec_uint ("y-clock-offset", "y-clock-offset",
           "y-clock-offset",
           0, G_MAXUINT, 0,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
-          GST_PARAM_MUTABLE_READY));
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+          GST_PARAM_MUTABLE_READY)));
 
   g_object_class_install_property (gobject_class, PROP_CLOCK_COLOR,
       g_param_spec_uint ("clock-color", "clock-color",
           "clock-color",
           0, G_MAXUINT, G_MAXUINT,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
-          GST_PARAM_MUTABLE_READY));
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+          GST_PARAM_MUTABLE_READY)));
 
   g_object_class_install_property (gobject_class, PROP_PROCESS_MODE,
       g_param_spec_enum ("process-mode", "Process Mode",
           "Rect and text draw process mode, CPU_MODE only support RGBA format",
           GST_TYPE_NV_OSD_PROCESS_MODE,
           GST_NV_OSD_DEFAULT_PROCESS_MODE,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
-          GST_PARAM_MUTABLE_READY));
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+          GST_PARAM_MUTABLE_READY)));
 
   g_object_class_install_property (gobject_class, PROP_GPU_DEVICE_ID,
       g_param_spec_uint ("gpu-id", "Set GPU Device ID",
           "Set GPU Device ID",
           0, G_MAXUINT, 0,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
-          GST_PARAM_MUTABLE_READY));
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+          GST_PARAM_MUTABLE_READY)));
 
   gst_element_class_set_details_simple (gstelement_class,
       "nvosdpadding plugin",
@@ -1002,10 +1020,12 @@ GST_NVOSDPADDING_init (GstNvOsdPadding * nvosdpadding)
   nvosdpadding->frame_circle_params =
       g_new0 (NvOSD_FrameCircleParams, MAX_OSD_ELEMS);
   nvosdpadding->enable_padding = DEFAULT_ENABLE_PADDING;
+  nvosdpadding->padding_size = DEFAULT_PADDING_SIZE;
   nvosdpadding->padding_color[0] = DEFAULT_PADDING_COLOR_R;
   nvosdpadding->padding_color[1] = DEFAULT_PADDING_COLOR_G;
   nvosdpadding->padding_color[2] = DEFAULT_PADDING_COLOR_B;
   nvosdpadding->padding_color[3] = DEFAULT_PADDING_COLOR_A;
+      
 }
 
 /**
