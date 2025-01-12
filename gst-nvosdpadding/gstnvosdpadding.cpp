@@ -388,18 +388,6 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     }
     // printf("*******************************************test");
     // printf("enable_padding: %d, padding_size: %d\n", nvosdpadding->enable_padding, nvosdpadding->padding_size);
-    if (nvosdpadding->enable_padding && nvosdpadding->padding_size > 0) {
-        printf("*******************************************test\n");
-      unsigned char *src_data = new unsigned char[surface->surfaceList[i].dataSize];
-
-      cudaMemcpy(src_data, surface->surfaceList[i].dataPtr, surface->surfaceList[i].dataSize, cudaMemcpyDeviceToHost);
-      int frame_width = surface->surfaceList[i].width;
-      int frame_height = surface->surfaceList[i].height;
-      size_t frame_step = surface->surfaceList[i].pitch;
-
-      cv::Mat rgba(frame_height, frame_width, CV_8UC4, src_data, frame_step);
-      cv::imwrite("./output/original_frame_padding.png", rgba);
-    }
 
 
     if (rect_cnt == MAX_OSD_ELEMS) {
@@ -667,16 +655,85 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     }
   }
 
-  if (nvosdpadding->nvosdpadding_mode == MODE_GPU) {
-    if (nvll_osd_apply (nvosdpadding->nvosdpadding_context, NULL, surface) == -1) {
-      // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-      //     ("Unable to draw shapes onto video frame by GPU"), NULL);
-      return GST_FLOW_ERROR;
-    }
-  }
+  
+// ... existing code ...
 
-  nvtxRangePop ();
-  nvosdpadding->frame_num++;
+if (nvosdpadding->nvosdpadding_mode == MODE_GPU) {
+    if (nvll_osd_apply (nvosdpadding->nvosdpadding_context, NULL, surface) == -1) {
+        return GST_FLOW_ERROR;
+    }
+}
+
+// Thêm padding cho tất cả các surface trong batch
+if (nvosdpadding->enable_padding && nvosdpadding->padding_size > 0) {
+    for (int batch_id = 0; batch_id < surface->numFilled; batch_id++) {
+        unsigned char *src_data = new unsigned char[surface->surfaceList[batch_id].dataSize];
+        if (!src_data) {
+            GST_ERROR_OBJECT(nvosdpadding, "Failed to allocate memory for src_data");
+            continue;
+        }
+
+        // Copy từ GPU sang CPU
+        cudaError_t err = cudaMemcpy(src_data, 
+                                   surface->surfaceList[batch_id].dataPtr,
+                                   surface->surfaceList[batch_id].dataSize,
+                                   cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess) {
+            GST_ERROR_OBJECT(nvosdpadding, "Failed to copy data from GPU: %s", 
+                           cudaGetErrorString(err));
+            delete[] src_data;
+            continue;
+        }
+
+        int frame_width = surface->surfaceList[batch_id].width;
+        int frame_height = surface->surfaceList[batch_id].height;
+        size_t frame_step = surface->surfaceList[batch_id].pitch;
+
+        try {
+            cv::Mat rgba(frame_height, frame_width, CV_8UC4, src_data, frame_step);
+            
+            // Define padding sizes
+            int top = nvosdpadding->padding_size;    
+            int bottom = nvosdpadding->padding_size;
+            int left = nvosdpadding->padding_size;   
+            int right = nvosdpadding->padding_size;
+
+            // Add padding
+            cv::Mat padded_rgba;
+            cv::copyMakeBorder(rgba, 
+                             padded_rgba,
+                             0, 0, 0, right,
+                             cv::BORDER_CONSTANT,
+                             cv::Scalar(nvosdpadding->padding_color[0],
+                                      nvosdpadding->padding_color[1],
+                                      nvosdpadding->padding_color[2],
+                                      nvosdpadding->padding_color[3]));
+
+            // Resize to target size
+            cv::Mat padded_resize(cv::Size(640, 640), CV_8UC4);
+            cv::resize(padded_rgba, padded_resize, cv::Size(640, 640));
+
+            // Copy back to GPU
+            err = cudaMemcpy(surface->surfaceList[batch_id].dataPtr,
+                           padded_resize.data,
+                           padded_resize.total() * padded_resize.elemSize(),
+                           cudaMemcpyHostToDevice);
+            if (err != cudaSuccess) {
+                GST_ERROR_OBJECT(nvosdpadding, "Failed to copy data to GPU: %s",
+                               cudaGetErrorString(err));
+            }
+        }
+        catch (cv::Exception& e) {
+            GST_ERROR_OBJECT(nvosdpadding, "OpenCV error: %s", e.what());
+        }
+
+        delete[] src_data;
+    }
+}
+
+nvtxRangePop ();
+nvosdpadding->frame_num++;
+// ... rest of the code ...
 
   nvds_set_output_system_timestamp (buf, GST_ELEMENT_NAME (nvosdpadding));
 
