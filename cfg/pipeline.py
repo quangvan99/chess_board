@@ -110,13 +110,13 @@ viz = {
             'padding-color': "255,255,255,255"  
         }
     },
-    "nvdsosd": {
-        "plugin": 'nvdsosd',
-        "properties": {
-            'process-mode': 0,
-            'display-text': 1
-        }
-    },
+    # "nvdsosd": {
+    #     "plugin": 'nvdsosd',
+    #     "properties": {
+    #         'process-mode': 0,
+    #         'display-text': 1
+    #     }
+    # },
 }
 
 # Displaysink configuration

@@ -178,6 +178,7 @@ class SourceState:
         self.current_arrow = None
         self.previous_arrow = None
         self.arrow_source_id = None 
+        self.move_history = []
 
 class BasePipeline:
     def __init__(self):
@@ -360,7 +361,11 @@ class BasePipeline:
                     if ('start_pos' in locals() and 'end_pos' in locals() and 
                         state.arrow_source_id == source_id):
                         display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+                        current_move = (end_pos, start_pos)  # end_pos là start thực tế
+                        if not state.move_history or state.move_history[-1] != current_move:
+                            state.move_history.append(current_move)
                         
+                        # Arrow params
                         display_meta.num_arrows = 1
                         display_meta.arrow_params[0].x1 = start_pos[0]
                         display_meta.arrow_params[0].y1 = start_pos[1] 
@@ -370,6 +375,7 @@ class BasePipeline:
                         display_meta.arrow_params[0].arrow_head = pyds.NvOSD_Arrow_Head_Direction.START_HEAD  
                         display_meta.arrow_params[0].arrow_color.set(1.0, 1.0, 1.0, 0.8)
                         
+                        # Circle params
                         display_meta.num_circles = 4  
                         
                         display_meta.circle_params[0].xc = start_pos[0]
@@ -392,8 +398,15 @@ class BasePipeline:
                         display_meta.circle_params[3].radius = 15 
                         display_meta.circle_params[3].circle_color.set(1.0, 0.0, 0.0, 0.8)
 
-                        display_meta.num_labels = 2
+                        # Text params for move history
+                        padding_x_offset = 10
+                        padding_y_offset = 20
+                        line_spacing = 30
+
+                        # Số lượng text = 2 (Start/End) + số lượng moves trong history
+                        display_meta.num_labels = len(state.move_history) + 2
                         
+                        # Text "End" và "Start" cho current move
                         display_meta.text_params[0].display_text = "End"
                         display_meta.text_params[0].x_offset = start_pos[0] - 20
                         display_meta.text_params[0].y_offset = start_pos[1] - 35
@@ -405,7 +418,18 @@ class BasePipeline:
                         display_meta.text_params[1].y_offset = end_pos[1] - 35
                         display_meta.text_params[1].font_params.font_size = 14
                         display_meta.text_params[1].font_params.font_color.set(1.0, 0.0, 0.0, 1.0)
-                        
+
+                        frame_width = frame_meta.source_frame_width
+                        print("*********************frame_width", frame_width)
+                        # Hiển thị lịch sử moves trong padding
+                        for idx, (hist_start, hist_end) in enumerate(state.move_history):
+                            move_text = f"Move {idx + 1}: Start({hist_start[0]:.1f}, {hist_start[1]:.1f}) -> End({hist_end[0]:.1f}, {hist_end[1]:.1f})"
+                            display_meta.text_params[idx + 2].display_text = move_text
+                            display_meta.text_params[idx + 2].x_offset = 640 + padding_x_offset 
+                            display_meta.text_params[idx + 2].y_offset = padding_y_offset + (idx * line_spacing)
+                            display_meta.text_params[idx + 2].font_params.font_size = 14
+                            display_meta.text_params[idx + 2].font_params.font_color.set(0.0, 0.0, 0.0, 1.0);
+
 
                         pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
 
