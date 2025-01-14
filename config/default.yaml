@@ -1,0 +1,44 @@
+model:
+  board_detection:
+    model_path: "model/board_mask.onnx"
+    conf_threshold: 0.8
+    iou_threshold: 0.6
+    num_masks: 32
+  
+  piece_detection:
+    model_path: "model/piece_detect_v11m.onnx"
+    class_names_path: "model/class_names.txt"
+    conf_threshold: 0.6
+    iou_threshold: 0.5
+
+  engine:
+    engine_path: "godogpaw/engines/godogpaw"
+  
+  use_gpu: false
+
+board:
+  warp_size: [500, 500]
+  resize_size: [640, 640]
+  check_rotation: true
+  
+  reference:
+    aruco_image_path: "data/board_with_aruco.png"
+    board_image_path: "data/board.png"
+
+  # Thêm cấu hình aruco
+  aruco:
+    dict_type: "DICT_4X4_250"
+    corner_refinement_method: 5
+    error_correction_rate: 0.3
+
+visualization:
+  debug: true
+  show_detection: true
+  output_size: [640, 640]
+  video_codec: "MJPG"
+
+gradio:
+  title: "ChessAI - MQ"
+  description: "Upload a video of a MQ board to process and visualize the board state frame by frame."
+  theme: "default"
+  debug: true

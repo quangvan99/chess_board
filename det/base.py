@@ -14,6 +14,8 @@ import cv2
 import configparser
 import ast
 from game.simple_engine.simple_engine import SimpleEngine
+from game.game_state import GameState, Player
+from game.chess_engine import ChessEngine
 # Fix bug deepstream 7.0
 os.system("rm -rf ~/.cache/gstreamer-1.0/registry.x86_64.bin")
 class BoardStateBuffer:
@@ -179,14 +181,16 @@ class SourceState:
         self.previous_arrow = None
         self.arrow_source_id = None 
         self.move_history = []
+        self.previous_board_processed = False
+        self.current_player = 'r'
 
 class BasePipeline:
     def __init__(self):
         self.count = 0
         self.mem_type = int(pyds.NVBUF_MEM_CUDA_UNIFIED)
-        # Dictionary để lưu trữ trạng thái cho từng source
         self.source_states = {}
         self.config_point_path =  "/home/project/chess_board/cfg/chessboard_detection_results.txt"
+        self.chess_engine = ChessEngine()
 
     def get_element(self, name):
         return self.pipeline.get_by_name(name)
@@ -301,12 +305,12 @@ class BasePipeline:
             surface = pyds.get_nvds_buf_surface(hash(gst_buffer), frame_meta.batch_id)
             objects = []
             l_obj = frame_meta.obj_meta_list
-
+            nvosdpadding = self.pipeline.get_by_name("nvosdpadding")
             while l_obj is not None:
                 try:
                     obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
                     objects.append(obj_meta)
-                    obj_meta.text_params.display_text = f"{obj_meta.class_id}:{obj_meta.confidence*100:.0f}"
+                    # obj_meta.text_params.display_text = f"{obj_meta.class_id}:{obj_meta.confidence*100:.0f}"
 
                 except StopIteration:
                     break
@@ -322,7 +326,6 @@ class BasePipeline:
                 xc_yc_list = self.read_grid_points(self.config_point_path, 
                                                 f"source_id_{source_id}", 
                                                 "grid_points")
-
                 if xc_yc_list is not None and len(xc_yc_list) > 0:
                     board = []
                     for rect in xc_yc_list:
@@ -340,16 +343,41 @@ class BasePipeline:
 
                     board = np.array(board).reshape(10, 9)
                     state.current_arrow = state.move_record.record_move(board)
+                    suggest_text = ''
                     # print("previous_board", state.move_record.previous_board)
                     # print("current_board", board)
-                    
                     if state.current_arrow is not None:
-                        
                         start_pos, end_pos, text = state.current_arrow
                         start_pos = (xc_yc_list[start_pos[0] * 9 + start_pos[1]])
                         end_pos = (xc_yc_list[end_pos[0] * 9 + end_pos[1]])
                         state.previous_arrow = state.current_arrow
+                        # if not state.move_history or state.move_history[-1] != current_move:
+                        state.move_history.append(state.previous_arrow)
                         state.arrow_source_id = source_id  
+                        state.previous_board_processed = False
+                    elif state.current_arrow is None and state.move_record.previous_board is not None:
+                        if not getattr(state, "previous_board_processed", False):
+                            game_state = GameState(state.move_record.previous_board)
+                            game_state.board = state.move_record.previous_board
+                            game_state.next_player = Player.RED if state.current_player == 'r' else Player.BLACK
+                            # Alternate player for the next move
+                            best_move = self.chess_engine.get_moves(game_state)
+                            if best_move is not None:
+                                print("-------------------------best_move:", best_move)
+                                from_x = (ord(best_move[0]) - ord("a"))
+                                from_y = (9 - int(best_move[1]))
+                                to_x = (ord(best_move[2]) - ord("a"))
+                                to_y = (9 - int(best_move[3]))
+                                print("------------------------------test",state.move_record.previous_board[from_y][from_x], (from_x, from_y), (to_x, to_y))
+                                suggest_text = (
+                                                f"Move: {state.move_record.previous_board[from_y][from_x]} "
+                                                f"from {from_y, from_x} to {to_y, to_x}"
+                                                )
+                                if nvosdpadding:
+                                    nvosdpadding.set_property("num-sources", suggest_text)
+                            state.arrow_source_id = source_id
+                            state.current_player = 'b' if state.current_player == 'r' else 'r'
+                            state.previous_board_processed = True
                     elif state.previous_arrow is not None and state.arrow_source_id == source_id:
                         print("***********************************************************************************************************")
                         print("previous_arrow", state.previous_arrow)
@@ -360,10 +388,32 @@ class BasePipeline:
 
                     if ('start_pos' in locals() and 'end_pos' in locals() and 
                         state.arrow_source_id == source_id):
+                        padding_text = []
+                        
+                        # Thêm thông tin về nước đi hiện tại
+                        # padding_text.append("Current Move:")
+                        # padding_text.append(f"Start: ({start_pos[0]:.1f}, {start_pos[1]:.1f})")
+                        # padding_text.append(f"End: ({end_pos[0]:.1f}, {end_pos[1]:.1f})")
+                        # padding_text.append(f"Piece: {text}")
+                        # padding_text.append("\nMove History:")
+                        
+                        # Thêm lịch sử các nước đi
+                        for idx, (hist_end, hist_start, name_piece) in enumerate(state.move_history):
+                            padding_text.append(
+                                f"Move {idx + 1}: {name_piece} {hist_start} -> {hist_end}"
+                            )
+                        print("***********************padding text:", padding_text)
+                        # Kết hợp tất cả text thành một chuỗi, phân cách bằng newline
+                        combined_text = "\n".join(padding_text)
+
+                        # Lấy element nvosdpadding và set padding text
+                        if nvosdpadding:
+                            # nvosdpadding.set_property("num-sources", suggest_text)
+                            nvosdpadding.set_property("padding-text", combined_text)
+                            # nvosdpadding.set_property("text-x-pos", frame_width + 10)  # Đặt text ở bên phải frame
+                            # nvosdpadding.set_property("text-y-pos", 50)
                         display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
-                        current_move = (end_pos, start_pos)  # end_pos là start thực tế
-                        if not state.move_history or state.move_history[-1] != current_move:
-                            state.move_history.append(current_move)
+                        # current_move = (end_pos, start_pos)  # end_pos là start thực tế
                         
                         # Arrow params
                         display_meta.num_arrows = 1
@@ -419,17 +469,18 @@ class BasePipeline:
                         display_meta.text_params[1].font_params.font_size = 14
                         display_meta.text_params[1].font_params.font_color.set(1.0, 0.0, 0.0, 1.0)
 
-                        frame_width = frame_meta.source_frame_width
-                        print("*********************frame_width", frame_width)
-                        # Hiển thị lịch sử moves trong padding
-                        for idx, (hist_start, hist_end) in enumerate(state.move_history):
-                            move_text = f"Move {idx + 1}: Start({hist_start[0]:.1f}, {hist_start[1]:.1f}) -> End({hist_end[0]:.1f}, {hist_end[1]:.1f})"
-                            display_meta.text_params[idx + 2].display_text = move_text
-                            display_meta.text_params[idx + 2].x_offset = 640 + padding_x_offset 
-                            display_meta.text_params[idx + 2].y_offset = padding_y_offset + (idx * line_spacing)
-                            display_meta.text_params[idx + 2].font_params.font_size = 14
-                            display_meta.text_params[idx + 2].font_params.font_color.set(0.0, 0.0, 0.0, 1.0);
+                        # frame_width = frame_meta.source_frame_width
+                        # print("*********************frame_width", frame_width)
+                        # # Hiển thị lịch sử moves trong padding
+                        # for idx, (hist_start, hist_end) in enumerate(state.move_history):
+                        #     move_text = f"Move {idx + 1}: Start({hist_start[0]:.1f}, {hist_start[1]:.1f}) -> End({hist_end[0]:.1f}, {hist_end[1]:.1f})"
+                        #     display_meta.text_params[idx + 2].display_text = move_text
+                        #     display_meta.text_params[idx + 2].x_offset = 640 + padding_x_offset 
+                        #     display_meta.text_params[idx + 2].y_offset = padding_y_offset + (idx * line_spacing)
+                        #     display_meta.text_params[idx + 2].font_params.font_size = 14
+                        #     display_meta.text_params[idx + 2].font_params.font_color.set(0.0, 0.0, 0.0, 1.0)
 
+                        # Tạo text cho padding
 
                         pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
 

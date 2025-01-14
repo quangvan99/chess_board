@@ -47,6 +47,11 @@ G_BEGIN_DECLS
 typedef struct _GstNvOsdPadding GstNvOsdPadding;
 typedef struct _GstNvOsdPaddingClass GstNvOsdPaddingClass;
 
+// Thêm struct cho text position
+struct TextPosition {
+    int x;
+    int y;
+};
 /**
  * GstNvOsdPadding element structure.
  */
@@ -135,13 +140,18 @@ struct _GstNvOsdPadding
   NvOSD_Color_info color_info[MAX_BG_CLR];
   gboolean enable_padding;
   guint padding_color[4];
+  gchar *padding_text;     // Add this line for padding text
+  gchar *num_sources;
+  TextPosition text_position;
   /** Integer indicating number of detected classes. */
   int num_class_entries;
   /** Integer indicating gpu id to be used. */
   guint gpu_id;
   /** Pointer to the converted buffer. */
   void *conv_buf;
+
 };
+
 
 /* GStreamer boilerplate. */
 struct _GstNvOsdPaddingClass
