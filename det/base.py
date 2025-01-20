@@ -175,6 +175,7 @@ class MoveRecorder:
             return (end_position, start_position, moved_piece)
         return None
 class SourceState:
+    """Maintain state for each video source"""
     def __init__(self):
         self.move_record = MoveRecorder()
         self.current_arrow = None
@@ -182,15 +183,23 @@ class SourceState:
         self.arrow_source_id = None 
         self.move_history = []
         self.previous_board_processed = False
-        self.current_player = 'r'
+        self.current_player = None
+        self.current_suggestion = None  # Thêm biến lưu suggestion hiện tại
+        self.previous_suggest = None
 
 class BasePipeline:
     def __init__(self):
         self.count = 0
         self.mem_type = int(pyds.NVBUF_MEM_CUDA_UNIFIED)
         self.source_states = {}
-        self.config_point_path =  "/home/project/chess_board/cfg/chessboard_detection_results.txt"
+        self.config_point_path = "/home/project/chess_board/cfg/chessboard_detection_results.txt"
         self.chess_engine = ChessEngine()
+        self.pipeline = None
+        self.loop = None
+        self.n_sources = 0
+        self.perf_data = None  # Sẽ được khởi tạo trong create_pipeline_from_cfg
+        self.str_pipe = None
+        self.inputs = None
 
     def get_element(self, name):
         return self.pipeline.get_by_name(name)
@@ -282,247 +291,267 @@ class BasePipeline:
             print(f"Error parsing points: {e}")
             return []
 
+    def create_display_meta(self, batch_meta, suggest_move, suggest_arrow, start_pos, end_pos, text, move_history=None):
+        """Create display metadata for visualization"""
+        display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+        # Arrow configuration
+        display_meta.num_arrows = 2
+        arrow = display_meta.arrow_params[0]
+        arrow.x1, arrow.y1 = start_pos
+        arrow.x2, arrow.y2 = end_pos
+        arrow.arrow_width = 4
+        arrow.arrow_head = pyds.NvOSD_Arrow_Head_Direction.START_HEAD
+        if text.startswith('r'):
+            arrow.arrow_color.set(1.0, 0.0, 0.0, 0.5)
+        else:
+            arrow.arrow_color.set(0.0, 0.0, 0.0, 1.0)     
+        if suggest_arrow:
+            start_pos_suggest ,end_pos_suggest = suggest_arrow
+            arrow = display_meta.arrow_params[1]
+            arrow.x1, arrow.y1 = start_pos_suggest
+            arrow.x2, arrow.y2 = end_pos_suggest
+            arrow.arrow_width = 4
+            arrow.arrow_head = pyds.NvOSD_Arrow_Head_Direction.START_HEAD
+            arrow.arrow_color.set(1.0, 1.0, 1.0, 1.0)
+        # Circle configuration
+        display_meta.num_circles = 4
+        circles = [
+            (start_pos, 25, (0.0, 1.0, 0.0, 0.3)),  # Start outer
+            (start_pos, 15, (0.0, 1.0, 0.0, 0.8)),  # Start inner
+            (end_pos, 25, (1.0, 0.0, 0.0, 0.3)),    # End outer
+            (end_pos, 15, (1.0, 0.0, 0.0, 0.8))     # End inner
+        ]
+        
+        for i, (pos, radius, color) in enumerate(circles):
+            circle = display_meta.circle_params[i]
+            circle.xc, circle.yc = pos
+            circle.radius = radius
+            circle.circle_color.set(*color)
+
+        # Tính toán số lượng text labels cần thiết
+        num_texts = 2  # Start/End labels
+        if move_history:
+            num_texts += len(move_history)  # Move history
+        if suggest_move:
+            num_texts += 1  # Suggestion text
+        
+        display_meta.num_labels = num_texts
+        text_params = []
+        history_list = []
+        # Add Start/End labels
+        text_params.extend([
+            {
+                "text": "End",
+                "pos": (start_pos[0] - 40, start_pos[1] - 55),
+                "color": (0.0, 1.0, 0.0, 1.0),
+                "size": 14
+            },
+            {
+                "text": "Start",
+                "pos": (end_pos[0] - 40, end_pos[1] - 55),
+                "color": (1.0, 0.0, 0.0, 1.0),
+                "size": 14
+            }
+        ])
+
+        if move_history is not None:
+            while len(move_history) > 10:
+                move_history.pop(0)  
+
+            history_list = [
+                f"BUOC {move[3]}: {move[2]} {move[1]} -> {move[0]}"
+                for move in move_history
+            ]
+        else:
+            history_list = []
+        combined_text = "\n".join(history_list)
+        nvosdpadding = self.pipeline.get_by_name("nvosdpadding")
+
+        if nvosdpadding:
+            nvosdpadding.set_property("num-sources", suggest_move)
+            nvosdpadding.set_property("padding-text", combined_text)
+        for i, params in enumerate(text_params):
+            text_param = display_meta.text_params[i]
+            text_param.display_text = params["text"]
+            text_param.x_offset, text_param.y_offset = params["pos"]
+            text_param.font_params.font_size = params["size"]
+            text_param.font_params.font_color.set(*params["color"])
+            
+        return display_meta
+            
+
+    def process_game_state(self, state, current_board, xc_yc_list, source_id):
+        """
+        Process game state and return display information
+        Args:
+            state: SourceState object
+            current_board: Current board state
+            xc_yc_list: List of coordinates
+            source_id: ID of the video source
+        """
+        display_info = {
+            'arrow': None,
+            'suggest_move': state.current_suggestion,  
+            'move_history': state.move_history,
+            'suggest_arrow': None
+        }
+
+        # Xử lý nước đi mới
+        if state.current_arrow is not None:
+            start_pos, end_pos, text = state.current_arrow
+            state.current_player = 'r' if text.startswith('b') else 'b'
+            print(state.current_player)
+            start_coords = xc_yc_list[start_pos[0] * 9 + start_pos[1]]
+            end_coords = xc_yc_list[end_pos[0] * 9 + end_pos[1]]
+            
+            state.previous_arrow = state.current_arrow
+            state.move_history.append((end_pos, start_pos, text, len(state.move_history) + 1))
+            state.arrow_source_id = source_id
+            state.previous_board_processed = False
+            display_info['arrow'] = (start_coords, end_coords, text)
+
+        # Tính toán gợi ý nước đi tiếp theo
+        else:
+            if not state.previous_board_processed and state.current_player is not None:
+                # print("---------------------------current arrow:", state.current_arrow)
+                game_state = GameState(state.move_record.previous_board)
+                game_state.next_player = Player.RED if state.current_player == 'r' else Player.BLACK
+                
+                best_move = self.chess_engine.get_moves(game_state)
+                if best_move:
+                    state.current_suggestion, start_pos_suggest, end_pos_suggest = self._format_suggestion(best_move, state)
+                    state.previous_suggest = (end_pos_suggest, start_pos_suggest)
+                    start_coords_suggest = xc_yc_list[start_pos_suggest[0] * 9 + start_pos_suggest[1]]
+                    end_coords_suggest = xc_yc_list[end_pos_suggest[0] * 9 + end_pos_suggest[1]]
+                    display_info['suggest_move'] = state.current_suggestion
+                    display_info['suggest_arrow'] = (start_coords_suggest, end_coords_suggest)
+                
+                state.arrow_source_id = source_id
+                # state.current_player = 'b' if state.current_player == 'r' else 'r'
+                state.previous_board_processed = True
+
+        # Hiển thị arrow hiện tại
+        if state.previous_arrow is not None and state.arrow_source_id == source_id:
+            start_pos, end_pos, text = state.previous_arrow
+            start_coords = xc_yc_list[start_pos[0] * 9 + start_pos[1]]
+            end_coords = xc_yc_list[end_pos[0] * 9 + end_pos[1]]
+            display_info['arrow'] = (start_coords, end_coords, text)
+            if state.previous_suggest:
+                start_pos_suggest, end_pos_suggest = state.previous_suggest
+                start_coords_suggest = xc_yc_list[start_pos_suggest[0] * 9 + start_pos_suggest[1]]
+                end_coords_suggest = xc_yc_list[end_pos_suggest[0] * 9 + end_pos_suggest[1]]
+                display_info['suggest_arrow'] = (start_coords_suggest, end_coords_suggest)
+
+        return display_info
+
     def tiler_sink_pad_buffer_probe(self, pad, info, u_data):
+        """Callback function for processing each frame"""
+        if self.perf_data is None:
+            print("Warning: perf_data not initialized")
+            return Gst.PadProbeReturn.OK
+
         gst_buffer = info.get_buffer()
         if not gst_buffer:
             print("Unable to get GstBuffer ")
-            return
+            return Gst.PadProbeReturn.OK
 
         batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
         l_frame = batch_meta.frame_meta_list
         
-        while l_frame is not None:
+        while l_frame:
             try:
                 frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
-            except StopIteration:
-                break
-
-            source_id = frame_meta.source_id
-            if source_id not in self.source_states:
-                self.source_states[source_id] = SourceState()
-            state = self.source_states[source_id]
-
-            surface = pyds.get_nvds_buf_surface(hash(gst_buffer), frame_meta.batch_id)
-            objects = []
-            l_obj = frame_meta.obj_meta_list
-            nvosdpadding = self.pipeline.get_by_name("nvosdpadding")
-            while l_obj is not None:
-                try:
-                    obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
-                    objects.append(obj_meta)
-                    # obj_meta.text_params.display_text = f"{obj_meta.class_id}:{obj_meta.confidence*100:.0f}"
-
-                except StopIteration:
-                    break
-
-                try:
-                    l_obj = l_obj.next
-                except StopIteration:
-                    break
-            try:
+                source_id = frame_meta.source_id
+                
+                if source_id not in self.source_states:
+                    self.source_states[source_id] = SourceState()
+                
+                state = self.source_states[source_id]
+                
+                # Process objects in frame
+                objects = self._process_objects(frame_meta)
+                
+                # Update performance data
                 stream_index = f"stream{source_id}"
                 self.perf_data.update_fps(stream_index)
-
-                xc_yc_list = self.read_grid_points(self.config_point_path, 
-                                                f"source_id_{source_id}", 
-                                                "grid_points")
-                if xc_yc_list is not None and len(xc_yc_list) > 0:
-                    board = []
-                    for rect in xc_yc_list:
-                        is_inside_bbox = False
-                        x_center, y_center = rect
-                        for obj in objects:
-                            rect_params = obj.rect_params
-                            if (rect_params.left < x_center < rect_params.left + rect_params.width and 
-                                rect_params.top < y_center < rect_params.top + rect_params.height):
-                                class_id = obj.class_id
-                                class_name = obj.obj_label
-                                is_inside_bbox = True
-                                break
-                        board.append(class_name if is_inside_bbox else "")
-
-                    board = np.array(board).reshape(10, 9)
+                
+                # Get grid points for this source
+                xc_yc_list = self._read_grid_points(source_id)
+                
+                if xc_yc_list and objects:
+                    # Create board from detected objects
+                    board = self._create_board_from_objects(objects, xc_yc_list)
+                    
+                    # Record move
                     state.current_arrow = state.move_record.record_move(board)
-                    suggest_text = ''
-                    # print("previous_board", state.move_record.previous_board)
-                    # print("current_board", board)
-                    if state.current_arrow is not None:
-                        start_pos, end_pos, text = state.current_arrow
-                        start_pos = (xc_yc_list[start_pos[0] * 9 + start_pos[1]])
-                        end_pos = (xc_yc_list[end_pos[0] * 9 + end_pos[1]])
-                        state.previous_arrow = state.current_arrow
-                        # if not state.move_history or state.move_history[-1] != current_move:
-                        state.move_history.append(state.previous_arrow)
-                        state.arrow_source_id = source_id  
-                        state.previous_board_processed = False
-                    elif state.current_arrow is None and state.move_record.previous_board is not None:
-                        if not getattr(state, "previous_board_processed", False):
-                            game_state = GameState(state.move_record.previous_board)
-                            game_state.board = state.move_record.previous_board
-                            game_state.next_player = Player.RED if state.current_player == 'r' else Player.BLACK
-                            # Alternate player for the next move
-                            best_move = self.chess_engine.get_moves(game_state)
-                            if best_move is not None:
-                                print("-------------------------best_move:", best_move)
-                                from_x = (ord(best_move[0]) - ord("a"))
-                                from_y = (9 - int(best_move[1]))
-                                to_x = (ord(best_move[2]) - ord("a"))
-                                to_y = (9 - int(best_move[3]))
-                                print("------------------------------test",state.move_record.previous_board[from_y][from_x], (from_x, from_y), (to_x, to_y))
-                                suggest_text = (
-                                                f"Move: {state.move_record.previous_board[from_y][from_x]} "
-                                                f"from {from_y, from_x} to {to_y, to_x}"
-                                                )
-                                if nvosdpadding:
-                                    nvosdpadding.set_property("num-sources", suggest_text)
-                            state.arrow_source_id = source_id
-                            state.current_player = 'b' if state.current_player == 'r' else 'r'
-                            state.previous_board_processed = True
-                    elif state.previous_arrow is not None and state.arrow_source_id == source_id:
-                        print("***********************************************************************************************************")
-                        print("previous_arrow", state.previous_arrow)
-                        print("current_arrow", state.current_arrow)
-                        start_pos, end_pos, text = state.previous_arrow
-                        start_pos = (xc_yc_list[start_pos[0] * 9 + start_pos[1]])
-                        end_pos = (xc_yc_list[end_pos[0] * 9 + end_pos[1]])
-
-                    if ('start_pos' in locals() and 'end_pos' in locals() and 
-                        state.arrow_source_id == source_id):
-                        padding_text = []
-                        
-                        # Thêm thông tin về nước đi hiện tại
-                        # padding_text.append("Current Move:")
-                        # padding_text.append(f"Start: ({start_pos[0]:.1f}, {start_pos[1]:.1f})")
-                        # padding_text.append(f"End: ({end_pos[0]:.1f}, {end_pos[1]:.1f})")
-                        # padding_text.append(f"Piece: {text}")
-                        # padding_text.append("\nMove History:")
-                        
-                        # Thêm lịch sử các nước đi
-                        for idx, (hist_end, hist_start, name_piece) in enumerate(state.move_history):
-                            padding_text.append(
-                                f"Move {idx + 1}: {name_piece} {hist_start} -> {hist_end}"
-                            )
-                        print("***********************padding text:", padding_text)
-                        # Kết hợp tất cả text thành một chuỗi, phân cách bằng newline
-                        combined_text = "\n".join(padding_text)
-
-                        # Lấy element nvosdpadding và set padding text
-                        if nvosdpadding:
-                            # nvosdpadding.set_property("num-sources", suggest_text)
-                            nvosdpadding.set_property("padding-text", combined_text)
-                            # nvosdpadding.set_property("text-x-pos", frame_width + 10)  # Đặt text ở bên phải frame
-                            # nvosdpadding.set_property("text-y-pos", 50)
-                        display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
-                        # current_move = (end_pos, start_pos)  # end_pos là start thực tế
-                        
-                        # Arrow params
-                        display_meta.num_arrows = 1
-                        display_meta.arrow_params[0].x1 = start_pos[0]
-                        display_meta.arrow_params[0].y1 = start_pos[1] 
-                        display_meta.arrow_params[0].x2 = end_pos[0]
-                        display_meta.arrow_params[0].y2 = end_pos[1]
-                        display_meta.arrow_params[0].arrow_width = 4 
-                        display_meta.arrow_params[0].arrow_head = pyds.NvOSD_Arrow_Head_Direction.START_HEAD  
-                        display_meta.arrow_params[0].arrow_color.set(1.0, 1.0, 1.0, 0.8)
-                        
-                        # Circle params
-                        display_meta.num_circles = 4  
-                        
-                        display_meta.circle_params[0].xc = start_pos[0]
-                        display_meta.circle_params[0].yc = start_pos[1]
-                        display_meta.circle_params[0].radius = 25 
-                        display_meta.circle_params[0].circle_color.set(0.0, 1.0, 0.0, 0.3)
-                        
-                        display_meta.circle_params[1].xc = start_pos[0]
-                        display_meta.circle_params[1].yc = start_pos[1]
-                        display_meta.circle_params[1].radius = 15 
-                        display_meta.circle_params[1].circle_color.set(0.0, 1.0, 0.0, 0.8)
-                        
-                        display_meta.circle_params[2].xc = end_pos[0]
-                        display_meta.circle_params[2].yc = end_pos[1]
-                        display_meta.circle_params[2].radius = 25 
-                        display_meta.circle_params[2].circle_color.set(1.0, 0.0, 0.0, 0.3)
-                        
-                        display_meta.circle_params[3].xc = end_pos[0]
-                        display_meta.circle_params[3].yc = end_pos[1]
-                        display_meta.circle_params[3].radius = 15 
-                        display_meta.circle_params[3].circle_color.set(1.0, 0.0, 0.0, 0.8)
-
-                        # Text params for move history
-                        padding_x_offset = 10
-                        padding_y_offset = 20
-                        line_spacing = 30
-
-                        # Số lượng text = 2 (Start/End) + số lượng moves trong history
-                        display_meta.num_labels = len(state.move_history) + 2
-                        
-                        # Text "End" và "Start" cho current move
-                        display_meta.text_params[0].display_text = "End"
-                        display_meta.text_params[0].x_offset = start_pos[0] - 20
-                        display_meta.text_params[0].y_offset = start_pos[1] - 35
-                        display_meta.text_params[0].font_params.font_size = 14
-                        display_meta.text_params[0].font_params.font_color.set(0.0, 1.0, 0.0, 1.0)
-                        
-                        display_meta.text_params[1].display_text = "Start"
-                        display_meta.text_params[1].x_offset = end_pos[0] - 20
-                        display_meta.text_params[1].y_offset = end_pos[1] - 35
-                        display_meta.text_params[1].font_params.font_size = 14
-                        display_meta.text_params[1].font_params.font_color.set(1.0, 0.0, 0.0, 1.0)
-
-                        # frame_width = frame_meta.source_frame_width
-                        # print("*********************frame_width", frame_width)
-                        # # Hiển thị lịch sử moves trong padding
-                        # for idx, (hist_start, hist_end) in enumerate(state.move_history):
-                        #     move_text = f"Move {idx + 1}: Start({hist_start[0]:.1f}, {hist_start[1]:.1f}) -> End({hist_end[0]:.1f}, {hist_end[1]:.1f})"
-                        #     display_meta.text_params[idx + 2].display_text = move_text
-                        #     display_meta.text_params[idx + 2].x_offset = 640 + padding_x_offset 
-                        #     display_meta.text_params[idx + 2].y_offset = padding_y_offset + (idx * line_spacing)
-                        #     display_meta.text_params[idx + 2].font_params.font_size = 14
-                        #     display_meta.text_params[idx + 2].font_params.font_color.set(0.0, 0.0, 0.0, 1.0)
-
-                        # Tạo text cho padding
-
+                    
+                    # Process game state and get display info
+                    display_info = self.process_game_state(state, board, xc_yc_list, source_id)
+                    
+                    # Draw visualization if there's an arrow to display
+                    if display_info['arrow']:
+                        print("---------------------display info:", display_info)
+                        start_coords, end_coords, text = display_info['arrow']
+                        display_meta = self.create_display_meta(
+                            batch_meta,
+                            display_info['suggest_move'],
+                            display_info['suggest_arrow'],
+                            start_coords,
+                            end_coords,
+                            text,
+                            display_info['move_history']
+                        )
                         pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
-
-                # # Vẽ grid points chỉ cho source_id hiện tại
-                # MAX_CIRCLES = 16
-                # display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
-                # num_points = min(len(xc_yc_list), MAX_CIRCLES)
-                # display_meta.num_circles = num_points
-
-                # for i in range(num_points):
-                #     x, y = xc_yc_list[i]
-                #     display_meta.circle_params[i].xc = x
-                #     display_meta.circle_params[i].yc = y
-                #     display_meta.circle_params[i].radius = 3
-                #     display_meta.circle_params[i].circle_color.red = 0.0
-                #     display_meta.circle_params[i].circle_color.green = 1.0
-                #     display_meta.circle_params[i].circle_color.blue = 0.0
-                #     display_meta.circle_params[i].circle_color.alpha = 1.0
-
-                # pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
-            except StopIteration:
-                break
-            try:
+                
                 l_frame = l_frame.next
+                
             except StopIteration:
                 break
 
         return Gst.PadProbeReturn.OK
 
+    def _process_objects(self, frame_meta):
+        """Extract objects from frame metadata"""
+        objects = []
+        l_obj = frame_meta.obj_meta_list
+        while l_obj:
+            try:
+                obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
+                objects.append(obj_meta)
+                obj_meta.text_params.display_text = f"{obj_meta.class_id}:{obj_meta.confidence*100:.0f}"
+                l_obj = l_obj.next
+            except StopIteration:
+                break
+        return objects
+
+    def _read_grid_points(self, source_id):
+        """Read grid points for specific source from config"""
+        try:
+            config = configparser.ConfigParser()
+            config.read(self.config_point_path)
+            section = f"source_id_{source_id}"
+            if section in config:
+                points_str = config[section]["grid_points"]
+                return ast.literal_eval(points_str)
+        except Exception as e:
+            print(f"Error reading grid points: {e}")
+        return None
+
     def create_pipeline_from_cfg(self, str_pipe, name_pipe="pipeline"):
+        """Create and configure the GStreamer pipeline"""
         Gst.init(None)
 
         self.str_pipe = str_pipe
         self.inputs = str_pipe['source']['properties']['urls']
         self.n_sources = len(self.inputs)
-        self.perf_data = PERF_DATA(self.n_sources)
+        self.perf_data = PERF_DATA(self.n_sources)  # Khởi tạo PERF_DATA sau khi có n_sources
+        
         self.pipeline = Gst.Pipeline.new(name_pipe)
+
         # Create elements 
         elements = {}
         for el in str_pipe:
             if el == 'source':
-
                 continue
             elements[el] = Gst.ElementFactory.make(str_pipe[el]['plugin'], el)
             for k,v in str_pipe[el]['properties'].items():
@@ -591,3 +620,66 @@ class BasePipeline:
         del self.inputs
         del self.n_sources
         del self.str_pipe
+
+    def _create_board_from_objects(self, objects, xc_yc_list):
+        """
+        Tạo bảng cờ từ các object được phát hiện
+        Args:
+            objects: Danh sách các object được phát hiện
+            xc_yc_list: Danh sách tọa độ các ô cờ
+        Returns:
+            numpy.ndarray: Bảng cờ với các quân cờ được đặt đúng vị trí
+        """
+        # Khởi tạo bảng cờ trống
+        board = np.full((10, 9), "", dtype=object)
+        
+        # Xử lý từng object
+        for obj_meta in objects:
+            # Lấy tọa độ tâm của object
+            rect_params = obj_meta.rect_params
+            center_x = rect_params.left + rect_params.width / 2
+            center_y = rect_params.top + rect_params.height / 2
+            
+            # Tìm ô cờ gần nhất
+            min_distance = float('inf')
+            closest_cell = None
+            
+            for i, (xc, yc) in enumerate(xc_yc_list):
+                distance = math.sqrt((center_x - xc)**2 + (center_y - yc)**2)
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_cell = i
+            
+            if closest_cell is not None:
+                # Chuyển đổi index 1D thành tọa độ 2D trên bàn cờ
+                row = closest_cell // 9
+                col = closest_cell % 9
+                
+                # Lấy tên class của object
+                obj_label = obj_meta.obj_label
+                
+                # Cập nhật bảng cờ
+                board[row][col] = obj_label
+        
+        return board
+
+    def _format_suggestion(self, best_move, state):
+        """
+        Format nước đi gợi ý thành text
+        Args:
+            best_move: Nước đi tốt nhất từ chess engine
+            state: Trạng thái hiện tại
+        Returns:
+            str: Text mô tả nước đi gợi ý
+        """
+        try:
+            from_x = ord(best_move[0]) - ord("a")
+            from_y = 9 - int(best_move[1])
+            to_x = ord(best_move[2]) - ord("a")
+            to_y = 9 - int(best_move[3])
+
+            piece = state.move_record.previous_board[from_y][from_x]
+            return f"BUOC: {piece} from {from_y, from_x} to {to_y, to_x}", (from_y, from_x), (to_y, to_x)
+        except Exception as e:
+            print(f"Error formatting suggestion: {e}")
+            return ""

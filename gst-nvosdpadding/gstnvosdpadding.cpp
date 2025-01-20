@@ -730,18 +730,26 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
                              nvosdpadding->padding_color[3]));
         rgba.copyTo(im_processed(cv::Rect(0, 0, 640, 640)));
         printf("-------------------------num sources %s:", nvosdpadding->num_sources);
-        int current_y = nvosdpadding->text_position.y;
-        cv::Point text_pos_suggest_red(640, 500);
+        int current_y = 30;
+        cv::Point text_pos_suggest(640, 400);
         cv::putText(im_processed, 
-                    "Suggest Red:",
-                    text_pos_suggest_red,
+                    "NUOC DI GOI Y",
+                    text_pos_suggest,
                     cv::FONT_HERSHEY_SIMPLEX,
                     1.0,
                     cv::Scalar(0, 0, 0, 255),
-                    2);
-        cv::Point text_pos_suggest_black(640, 580);
+                    4);
+        cv::Point text_pos_suggest_red(640, 450);
         cv::putText(im_processed, 
-                    "Suggest Black:",
+                    "BEN DO:",
+                    text_pos_suggest_red,
+                    cv::FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    cv::Scalar(255, 0, 0, 255),
+                    2);
+        cv::Point text_pos_suggest_black(640, 530);
+        cv::putText(im_processed, 
+                    "BEN DEN:",
                     text_pos_suggest_black,
                     cv::FONT_HERSHEY_SIMPLEX,
                     1.0,
@@ -749,11 +757,14 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
                     2);
         if (nvosdpadding->num_sources && strlen(nvosdpadding->num_sources) > 0) {
             int text_x = frame_width + 10; 
-            int text_y = 0;     
-            if (strncmp(nvosdpadding->num_sources, "Move: r", 7) == 0) {
-                text_y = 540;
-            } else if (strncmp(nvosdpadding->num_sources, "Move: b", 7) == 0) {
-                text_y = 620;
+            int text_y = 0;
+            int color_text = 255;     
+            if (strncmp(nvosdpadding->num_sources, "BUOC: r", 7) == 0) {
+                text_y = 490;
+                color_text = 255;
+            } else if (strncmp(nvosdpadding->num_sources, "BUOC: b", 7) == 0) {
+                text_y = 570;
+                color_text = 0;
             } else {
                 text_y = 20; // Vị trí mặc định nếu không khớp
             }
@@ -763,18 +774,18 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
                       cv::Point(640, text_y),
                       cv::FONT_HERSHEY_SIMPLEX,
                       0.7,              
-                      cv::Scalar(0, 0, 0, 255),  
+                      cv::Scalar(color_text, 0, 0, 255),  
                       2);              
             text_y += 40; 
         }
         cv::Point text_pos_move_history(640, current_y);
         cv::putText(im_processed, 
-                    "Move history:",
+                    "LICH SU NUOC DI:",
                     text_pos_move_history,
                     cv::FONT_HERSHEY_SIMPLEX,
                     1.0,
                     cv::Scalar(0, 0, 0, 255),
-                    2);
+                    4);
         current_y += 40;
         if (nvosdpadding->padding_text && strlen(nvosdpadding->padding_text) > 0) {
             gchar **lines = g_strsplit(nvosdpadding->padding_text, "\n", -1);
@@ -820,7 +831,6 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
 
   nvtxRangePop ();
   nvosdpadding->frame_num++;
-  // ... rest of the code ...
 
   nvds_set_output_system_timestamp (buf, GST_ELEMENT_NAME (nvosdpadding));
 

@@ -1610,6 +1610,36 @@ std::map<std::string, std::vector<cv::Point2f>> readPointsFromConfig(
     return points;
 }
 
+static void copyMatToNvBufSurface(const cv::Mat& mat, NvBufSurface* surface, int batchIndex) {
+    // Validate dimensions
+    if (mat.cols != surface->surfaceList[batchIndex].width || 
+        mat.rows != surface->surfaceList[batchIndex].height || 
+        mat.type() != CV_8UC4) { // Assuming NVBUF_COLOR_FORMAT_RGBA
+        throw std::runtime_error("cv::Mat dimensions or type do not match NvBufSurface.");
+    }
+
+    // Map the buffer for write access
+    if (NvBufSurfaceMap(surface, batchIndex, 0, NVBUF_MAP_WRITE) != 0) {
+        throw std::runtime_error("Failed to map NvBufSurface.");
+    }
+
+    // Get pointer to the device memory
+    unsigned char* dstPtr = reinterpret_cast<unsigned char*>(surface->surfaceList[batchIndex].dataPtr);
+
+    // Calculate stride (pitch) and frame size
+    size_t dstPitch = surface->surfaceList[batchIndex].pitch;
+    size_t frameSize = mat.cols * mat.elemSize();
+
+    // Copy data row by row (to respect pitch)
+    for (int i = 0; i < mat.rows; ++i) {
+        cudaMemcpy(dstPtr + i * dstPitch, mat.ptr(i), dstPitch, cudaMemcpyHostToDevice);
+    }
+
+    // Unmap the buffer
+    if (NvBufSurfaceUnMap(surface, batchIndex, 0) != 0) {
+        throw std::runtime_error("Failed to unmap NvBufSurface.");
+    }
+}
 
 
 /* Process entire frames in the batched buffer. */
@@ -1769,7 +1799,7 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     cv::warpPerspective(resized_image, transformed_image, perspective_matrix, cv::Size(1280, 1280));
     // cv::Mat rotated_image;
     // cv::rotate(transformed_image, rotated_image, cv::ROTATE_90_CLOCKWISE);
-    // cv::imwrite("./output/transformed_frame.png", rotated_image);
+    cv::imwrite("./output/transformed_frame.png", transformed_image);
     // cv::Mat rgb_image;
     // cv::cvtColor(transformed_image, transformed_image, cv::COLOR_BGRA2RGB);
     // cv::imwrite("./output/rgb_frame.png", rgb_image);
@@ -1777,11 +1807,12 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     // cv::resize(transformed_image, transformed_image, cv::Size(frame_width, frame_height));
     // cv::cvtColor(transformed_image, transformed_image, cv::COLOR_RGBA2RGB);
     
-    cudaMemcpy(in_surf->surfaceList[i].dataPtr, transformed_image.data, 
-              transformed_image.total() * transformed_image.elemSize(), cudaMemcpyHostToDevice);
+    // cudaMemcpy(in_surf->surfaceList[i].dataPtr, transformed_image.data, 
+    //           transformed_image.total() * transformed_image.elemSize(), cudaMemcpyHostToDevice);
+    // free(src_data);
 
-    free(src_data);
-    // delete src_data;
+    copyMatToNvBufSurface(transformed_image, in_surf, 0);
+    delete src_data;
     // printf("---------------\n");
     // printf("source_id %d \n", frame.frame_meta->source_id);
     // printf("source_frame_width %d \n", frame.frame_meta->source_frame_width);
