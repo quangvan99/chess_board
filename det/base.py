@@ -16,6 +16,10 @@ import ast
 from game.simple_engine.simple_engine import SimpleEngine
 from game.game_state import GameState, Player
 from game.chess_engine import ChessEngine
+import time
+from collections import deque
+
+# Add queue as state variable (add to __init__)
 # Fix bug deepstream 7.0
 os.system("rm -rf ~/.cache/gstreamer-1.0/registry.x86_64.bin")
 class BoardStateBuffer:
@@ -75,6 +79,9 @@ class MoveRecorder:
         self.move_history = []
         self.board_buffer = BoardStateBuffer(buffer_size=10)
         self.simple_engine = SimpleEngine(None)
+        # self.last_stable_board = None
+        # self.last_update_time = time.time()
+    
     def record_move(self, current_board):
         # Thêm board hiện tại vào buffer
         self.board_buffer.add_board(current_board)
@@ -84,30 +91,47 @@ class MoveRecorder:
         stable_board = self.board_buffer.get_stable_board(0.7 ,labels_list)
         if stable_board is None:
             return None
-            
+        
         if self.previous_board is None:
             self.previous_board = stable_board
+            # self.last_update_time = time.time()
             return None
         print("stable_board", stable_board)
+        self.previous_board = np.array(self.previous_board)
         print("previous_board", self.previous_board)
         if not self.is_board_change_valid(self.previous_board, stable_board):
             print("Board change is too large, keeping the old state.")
             return None
-            
-        move = self.detect_move_with_capture(self.previous_board, stable_board)
-        if move:
-            to_pos, from_pos, piece = move
-            print(f"Detected move: {piece} from {from_pos} to {to_pos}")
+        # Kiểm tra sự thay đổi hợp lệ của bàn cờ
+        possible_moves = self.find_possible_moves(self.previous_board, stable_board)
+        
+        valid_moves = []
+        for move in possible_moves:
+            from_pos, to_pos, piece = move
             if self.simple_engine.move(self.previous_board, from_pos, to_pos):
-                stable_board[to_pos[0], to_pos[1]] = piece
-                self.previous_board = stable_board
-            else:
-                print("Invalid move, keeping the old state.")
-                return None
+                valid_moves.append(move)
+        
+        if valid_moves:
+            # Cập nhật previous_board bằng các nước đi hợp lệ
+            new_board = [row[:] for row in self.previous_board]  # Tạo bản sao của previous_board
+            for from_pos, to_pos, piece in valid_moves:
+                new_board[from_pos[0]][from_pos[1]] = ''  # Xóa quân cờ khỏi vị trí cũ
+                new_board[to_pos[0]][to_pos[1]] = piece  # Đặt quân cờ vào vị trí mới
             
-        return move
+            self.previous_board = new_board
+            self.last_update_time = time.time()
+            return valid_moves
+        # self.last_stable_board = stable_board
+        # if time.time() - self.last_update_time > 20:
+        #     self.previous_board = self.last_stable_board
+        #     self.last_update_time = time.time()
+        #     print("No valid moves detected after timeout, updating previous board.")
+        # 
+        print("No valid moves detected, keeping the old state.")
+        return None
 
-    def is_board_change_valid(self, old_board, new_board, max_changes=2):
+
+    def is_board_change_valid(self, old_board, new_board, max_changes=4):
         changes = 0
         for i in range(len(old_board)):
             for j in range(len(old_board[i])):
@@ -117,63 +141,42 @@ class MoveRecorder:
                     print(f"Too many changes: {changes}")
                     return False
         return True
-
-    def detect_move(self, old_board, new_board):
-        start_position = None
-        end_position = None
-        moved_piece = None
-
-        for i in range(len(old_board)):
-            for j in range(len(old_board[i])):
-                old_piece = old_board[i][j]
-                new_piece = new_board[i][j]
-
-                if old_piece != new_piece:
-                    if old_piece != '' and new_piece == '':
-                        start_position = (i, j)
-                        moved_piece = old_piece
-                    if old_piece == '' and new_piece != '':
-                        end_position = (i, j)
-                    else:
-                        end_position = (i, j)
-        print(start_position, end_position, moved_piece)
-        if start_position and end_position and moved_piece:
-            return (start_position, end_position, moved_piece)
-        return None
     
-    def detect_move_with_capture(self, old_board, new_board):
-        start_position = None
-        end_position = None
-        moved_piece = None
-        captured_piece = None
-
+    def find_possible_moves(self, old_board, new_board):
+        changed_positions = []
+        
         for i in range(len(old_board)):
             for j in range(len(old_board[i])):
-                old_piece = old_board[i][j]
-                new_piece = new_board[i][j]
+                if old_board[i][j] != new_board[i][j]:
+                    changed_positions.append((i, j))
+        
+        if len(changed_positions) > 4:
+            print(f"Too many changes detected: {len(changed_positions)}")
+            return None
+        
+        possible_moves = []
+        moved_pieces = {}
+        
+        for x, y in changed_positions:
+            old_piece = old_board[x][y]
+            new_piece = new_board[x][y]
+            
+            if old_piece != '' and new_piece == '':  
+                moved_pieces[(x, y)] = old_piece
+            elif old_piece == '' and new_piece != '': 
+                possible_moves.append(((x, y), new_piece))
+            elif old_piece != '' and new_piece != '' and old_piece[0] != new_piece[0]:
+                possible_moves.append(((x, y), new_piece))
+            
+        
+        detected_moves = []
+        for (end_x, end_y), piece in possible_moves:
+            for (start_x, start_y), moved_piece in moved_pieces.items():
+                if moved_piece == piece:  
+                    detected_moves.append(((start_x, start_y), (end_x, end_y), moved_piece))
+        print("detect:", detected_moves)
+        return detected_moves
 
-                if old_piece != new_piece:
-                    if old_piece != '' and new_piece == '':
-                        start_position = (i, j)
-                        moved_piece = old_piece
-                    elif old_piece == '' and new_piece != '':
-                        end_position = (i, j)
-                    elif old_piece != '' and new_piece != '' and old_piece[0] != new_piece[0]:
-                        # start_position = (i, j)
-                        end_position = (i, j)
-                        captured_piece = old_piece
-                        moved_piece = new_piece
-        # if captured_piece and start_position:
-        #     end_position = start_position
-        #     for i in range(len(old_board)):
-        #         for j in range(len(old_board[i])):
-        #             if old_board[i][j] == captured_piece:
-        #                 end_position = (i, j)
-        #                 break
-        # Kết quả bao gồm vị trí bắt đầu, vị trí đích, quân cờ đã di chuyển, và quân cờ bị ăn (nếu có)
-        if start_position and end_position and moved_piece:
-            return (end_position, start_position, moved_piece)
-        return None
 class SourceState:
     """Maintain state for each video source"""
     def __init__(self):
@@ -186,6 +189,8 @@ class SourceState:
         self.current_player = None
         self.current_suggestion = None  # Thêm biến lưu suggestion hiện tại
         self.previous_suggest = None
+        self.arrow_queue = deque()
+        
 
 class BasePipeline:
     def __init__(self):
@@ -297,8 +302,8 @@ class BasePipeline:
         # Arrow configuration
         display_meta.num_arrows = 2
         arrow = display_meta.arrow_params[0]
-        arrow.x1, arrow.y1 = start_pos
-        arrow.x2, arrow.y2 = end_pos
+        arrow.x1, arrow.y1 = end_pos
+        arrow.x2, arrow.y2 = start_pos
         arrow.arrow_width = 4
         arrow.arrow_head = pyds.NvOSD_Arrow_Head_Direction.START_HEAD
         if text.startswith('r'):
@@ -341,13 +346,13 @@ class BasePipeline:
         # Add Start/End labels
         text_params.extend([
             {
-                "text": "End",
+                "text": "Start",
                 "pos": (start_pos[0] - 40, start_pos[1] - 55),
                 "color": (0.0, 1.0, 0.0, 1.0),
                 "size": 14
             },
             {
-                "text": "Start",
+                "text": "End",
                 "pos": (end_pos[0] - 40, end_pos[1] - 55),
                 "color": (1.0, 0.0, 0.0, 1.0),
                 "size": 14
@@ -355,6 +360,7 @@ class BasePipeline:
         ])
 
         if move_history is not None:
+            total_moves = move_history[-1][3] if move_history else 0
             while len(move_history) > 10:
                 move_history.pop(0)  
 
@@ -398,17 +404,40 @@ class BasePipeline:
 
         # Xử lý nước đi mới
         if state.current_arrow is not None:
-            start_pos, end_pos, text = state.current_arrow
-            state.current_player = 'r' if text.startswith('b') else 'b'
-            print(state.current_player)
-            start_coords = xc_yc_list[start_pos[0] * 9 + start_pos[1]]
-            end_coords = xc_yc_list[end_pos[0] * 9 + end_pos[1]]
+            if state.previous_arrow:
+                start_pos_prev, end_pos_prev, text_prev = state.previous_arrow
+                print(text_prev)
+                # Xác định bên còn lại so với text_prev
+                next_player = 'b' if text_prev.startswith('r') else 'r'
+                all_wrong_player = all(arrow[2].startswith(next_player) 
+                                    for arrow in state.current_arrow)
+            else:
+                next_player = 'b'
+                all_wrong_player = True
             
-            state.previous_arrow = state.current_arrow
-            state.move_history.append((end_pos, start_pos, text, len(state.move_history) + 1))
-            state.arrow_source_id = source_id
-            state.previous_board_processed = False
-            display_info['arrow'] = (start_coords, end_coords, text)
+            if not all_wrong_player:
+                # Queue current arrows for later processing
+                state.arrow_queue.extend(state.current_arrow)
+                return display_info
+                
+            # Process normal arrows + any queued arrows for correct player
+            sorted_arrows = sorted(state.current_arrow + list(state.arrow_queue),
+                                key=lambda arrow: arrow[2].startswith(next_player),
+                                reverse=True)
+            state.arrow_queue.clear()
+            for arrow in sorted_arrows:
+                start_pos, end_pos, text = arrow
+                state.current_player = 'r' if text.startswith('b') else 'b'
+                print(state.current_player)
+                start_coords = xc_yc_list[start_pos[0] * 9 + start_pos[1]]
+                end_coords = xc_yc_list[end_pos[0] * 9 + end_pos[1]]
+                
+                state.previous_arrow = arrow
+                next_move_number = state.move_history[-1][3] + 1 if state.move_history else 1
+                state.move_history.append((end_pos, start_pos, text, next_move_number))
+                state.arrow_source_id = source_id
+                state.previous_board_processed = False
+                display_info['arrow'] = (start_coords, end_coords, text)
 
         # Tính toán gợi ý nước đi tiếp theo
         else:
@@ -462,6 +491,8 @@ class BasePipeline:
             try:
                 frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
                 source_id = frame_meta.source_id
+                # self.inputs = str_pipe['source']['properties']['urls']
+                # self.n_sources = len(self.inputs)
                 
                 if source_id not in self.source_states:
                     self.source_states[source_id] = SourceState()
@@ -476,7 +507,7 @@ class BasePipeline:
                 self.perf_data.update_fps(stream_index)
                 
                 # Get grid points for this source
-                xc_yc_list = self._read_grid_points(source_id)
+                xc_yc_list, num_sources = self._read_grid_points(source_id)
                 
                 if xc_yc_list and objects:
                     # Create board from detected objects
@@ -491,6 +522,7 @@ class BasePipeline:
                     # Draw visualization if there's an arrow to display
                     if display_info['arrow']:
                         print("---------------------display info:", display_info)
+                        print("---------------------------------------------number:",num_sources)
                         start_coords, end_coords, text = display_info['arrow']
                         display_meta = self.create_display_meta(
                             batch_meta,
@@ -525,17 +557,31 @@ class BasePipeline:
         return objects
 
     def _read_grid_points(self, source_id):
-        """Read grid points for specific source from config"""
+        """
+        Read grid points for specific source from config
+        Returns:
+            tuple: (grid_points, num_sources) where:
+                - grid_points: List of grid point coordinates or None if error
+                - num_sources: Total number of sources in config file
+        """
         try:
             config = configparser.ConfigParser()
             config.read(self.config_point_path)
+            
+            # Count number of sources by looking for sections starting with "source_id_"
+            num_sources = len([section for section in config.sections() if section.startswith("source_id_")])
+            # Get grid points for specific source
             section = f"source_id_{source_id}"
             if section in config:
                 points_str = config[section]["grid_points"]
-                return ast.literal_eval(points_str)
+                grid_points = ast.literal_eval(points_str)
+                return grid_points, num_sources
+            
+            return None, num_sources
+            
         except Exception as e:
             print(f"Error reading grid points: {e}")
-        return None
+            return None, 0
 
     def create_pipeline_from_cfg(self, str_pipe, name_pipe="pipeline"):
         """Create and configure the GStreamer pipeline"""
@@ -548,26 +594,36 @@ class BasePipeline:
         
         self.pipeline = Gst.Pipeline.new(name_pipe)
 
-        # Create elements 
+        # Create elements
         elements = {}
         for el in str_pipe:
             if el == 'source':
                 continue
+            
             elements[el] = Gst.ElementFactory.make(str_pipe[el]['plugin'], el)
-            for k,v in str_pipe[el]['properties'].items():
+            # plugin_name = str_pipe[el]['plugin']
+            # if not Gst.ElementFactory.find(plugin_name):
+            #     print(f"[ERROR] Plugin '{plugin_name}' không tồn tại! Hãy kiểm tra cài đặt GStreamer.")
+            #     continue
+
+            # elements[el] = Gst.ElementFactory.make(plugin_name, el)
+            # if not elements[el]:
+            #     print(f"[ERROR] Không thể tạo phần tử GStreamer '{plugin_name}' cho '{el}'")
+            #     continue
+
+            for k, v in str_pipe[el]['properties'].items():
                 if k == "batch-size":
                     elements[el].set_property(k, self.n_sources)
                 elif k == "rows":
                     elements[el].set_property(k, int(math.sqrt(self.n_sources)))
                 elif k == "columns":
-                    elements[el].set_property(k, int(math.ceil((1.0*self.n_sources)/int(math.sqrt(self.n_sources)))))
+                    elements[el].set_property(k, int(math.ceil((1.0 * self.n_sources) / int(math.sqrt(self.n_sources)))))
                 elif k == "nvbuf-memory-type":
                     elements[el].set_property(k, self.mem_type)
                 elif k == "caps": 
                     elements[el].set_property(k, Gst.Caps.from_string("video/x-raw(memory:NVMM), format=RGBA"))
                 else:
                     elements[el].set_property(k, v)
-
         # add source and streammux
         self.pipeline.add(elements["sm"])
         for i, location in enumerate(self.inputs):

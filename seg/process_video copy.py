@@ -1,0 +1,172 @@
+import cv2
+import threading
+from seg.process import YOLOModel
+from seg.yolo.xla import find_horizontal_vertical_lines_and_intersections
+from seg.yolo.det_onnx import YOLOv8ONNXModel
+from cfg.src import source
+from config.config import cfg
+import math
+lock = threading.Lock()
+
+def update_result_file(result_file_path, source_id, video_path, corners=None, grid_points=None):
+    with lock: 
+        with open(result_file_path, "r") as result_file:
+            lines = result_file.readlines()
+
+        updated_lines = []
+        found_source = False
+
+        for line in lines:
+            if line.strip() == f"[source_id_{source_id}]":
+                found_source = True
+                updated_lines.append(line) 
+                if corners is not None and grid_points is not None:
+                    formatted_corners = ', '.join([f"{int(coord)}" for corner in corners for coord in corner])
+                    updated_lines.append(f"corners = {formatted_corners}\n")
+                    formatted_grid_points = ', '.join([f"({x}, {y})" for x, y in grid_points])
+                    updated_lines.append(f"grid_points = {formatted_grid_points}\n\n")
+                else:
+                    updated_lines.append(f"corners = None\n")
+                    updated_lines.append(f"grid_points = None\n\n")
+            elif found_source and (line.startswith("corners") or line.startswith("grid_points")):
+                continue  
+            else:
+                updated_lines.append(line)
+
+        if not found_source:
+            updated_lines.append(f"[source_id_{source_id}]\n")
+            updated_lines.append(f"video_path = {video_path}\n")
+            updated_lines.append(f"corners = None\n")
+            updated_lines.append(f"grid_points = None\n\n")
+
+        with open(result_file_path, "w") as result_file:
+            result_file.writelines(updated_lines)
+
+
+def process_video(video_path, source_id, stop_event, result_file_path):
+    yolo_model = YOLOModel()
+    det_inters = YOLOv8ONNXModel(path=cfg.model['intersection_detection']['model_path'],
+            class_names=0,
+            conf_threshold=cfg.model['intersection_detection']['conf_threshold'],
+            )
+    det_pieces = YOLOv8ONNXModel(path=cfg.model['piece_detection']['model_path'],
+            class_names=0,
+            conf_threshold=cfg.model['piece_detection']['conf_threshold'],
+            )
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Could not open video file {video_path}")
+        return
+
+    print(f"Started processing video {video_path} (source_id {source_id})")
+
+    corners_found = False
+    grid_points_found = False
+    rotate = 0
+    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        corners, warped_image = yolo_model.detect_chessboard(frame)
+        bbox, sco, cls = det_pieces(warped_image)
+        pos_0 = None
+        pos_7 = None
+        for i, class_id in enumerate(cls):
+            if class_id == 0:
+                pos_0 = bbox[i]  
+            elif class_id == 7:
+                pos_7 = bbox[i]
+        
+        if pos_0 is not None and pos_7 is not None:
+            x0, y0 = (pos_0[0] + pos_0[2]) / 2, (pos_0[1] + pos_0[3]) / 2 
+            x7, y7 = (pos_7[0] + pos_7[2]) / 2, (pos_7[1] + pos_7[3]) / 2 
+
+            dx, dy = x7 - x0, y7 - y0  
+            angle = math.degrees(math.atan2(dx, dy)) 
+
+            print(f"Vector angle: {angle:.2f} degrees")
+
+            if abs(angle) < 30 or abs(angle) > 150: 
+                if y0 < y7:  
+                    print("Rotating frame 180 degrees.")
+                    warped_image = cv2.rotate(warped_image, cv2.ROTATE_180)
+                    rotate = 180
+            else:
+                if x7 > x0: 
+                    print("Rotating frame -90 degrees (counter-clockwise).")
+                    warped_image = cv2.rotate(warped_image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                    rotate = -90
+                else:
+                    print("Rotating frame +90 degrees (clockwise).")
+                    warped_image = cv2.rotate(warped_image, cv2.ROTATE_90_CLOCKWISE)
+                    rotate = 90
+        if len(corners) > 0:
+            boxes_inter, score_inter, cls_inter = det_inters(warped_image)
+            if len(boxes_inter) == 90:
+                points = [( (x1 + x2) / 2, (y1 + y2) / 2 ) for x1, y1, x2, y2 in boxes_inter]
+                grid_points = [(int(p[0]), int(p[1])) for p in points]
+            else:
+                warped_image = cv2.resize(warped_image, (500, 500))
+                grid_points, rotate_90 = find_horizontal_vertical_lines_and_intersections(warped_image)
+            scale_x = 1280 / warped_image.shape[1]
+            scale_y = 1280 / warped_image.shape[0]
+
+            if grid_points is not None and len(grid_points) > 0:
+                grid_points = [(int(x * scale_x), int(y * scale_y)) for x, y in grid_points]
+            else:
+                print(f"Warning: No grid points found for video {video_path}")
+                grid_points = []
+
+            # Adjust corners based on rotation angle
+            if rotate == 90:
+                corners = [ corners[3], corners[0], corners[1], corners[2] ]
+
+            elif rotate == -90:
+                corners = [ corners[1], corners[2], corners[3], corners[0] ]
+
+            elif rotate == 180:
+                corners = [ corners[2], corners[3], corners[0], corners[1] ]
+
+            if len(grid_points) > 0:
+                update_result_file(result_file_path, source_id, video_path, corners, grid_points)
+                corners_found = True
+                grid_points_found = True
+                break
+
+    cap.release()
+
+    if not corners_found or not grid_points_found:
+        update_result_file(result_file_path, source_id, video_path)
+
+    print(f"Finished processing video {video_path} (source_id {source_id})")
+
+
+def process_multiple_videos(video_paths, result_file_path):
+    threads = []
+    stop_events = []
+
+    with open(result_file_path, "w") as file:
+        for source_id, video_path in enumerate(video_paths):
+            file.write(f"[source_id_{source_id}]\n")
+            file.write(f"video_path = {video_path}\n")
+            file.write(f"corners = None\n")
+            file.write(f"grid_points = None\n\n")
+
+    for source_id, video_path in enumerate(video_paths):
+        stop_event = threading.Event()
+        stop_events.append(stop_event)
+        thread = threading.Thread(target=process_video, args=(video_path, source_id, stop_event, result_file_path))
+        threads.append(thread)
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+
+if __name__ == "__main__":
+    video_paths = source["source"]["properties"]["urls"]
+    video_paths = [path.replace("file://", "") for path in video_paths]
+    result_file_path = "cfg/chessboard_detection_results.txt"
+    process_multiple_videos(video_paths, result_file_path)

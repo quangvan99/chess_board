@@ -321,7 +321,6 @@ GST_NVOSDPADDING_stop (GstBaseTransform * btrans)
 
 int frame_num = 0;
 
-
 void copyMatToNvBufSurface(const cv::Mat& mat, NvBufSurface* surface, int batchIndex) {
     // Validate dimensions
     if (mat.cols != surface->surfaceList[batchIndex].width || 
@@ -353,6 +352,220 @@ void copyMatToNvBufSurface(const cv::Mat& mat, NvBufSurface* surface, int batchI
     }
 }
 
+void addTextToVideo(cv::Mat& im_processed, GstNvOsdPadding* nvosdpadding, int batchIndex) {
+    int current_y = 30;
+    
+    // Thêm tiêu đề lịch sử nước đi
+    cv::Point text_pos_move_history(640, current_y);
+    cv::putText(im_processed, 
+                "LICH SU NUOC DI:",
+                text_pos_move_history,
+                cv::FONT_HERSHEY_SIMPLEX,
+                1.0,
+                cv::Scalar(0, 0, 0, 255),
+                4);
+    current_y += 40;
+
+    // Thêm text gợi ý nước đi
+    cv::Point text_pos_suggest(640, 400);
+    cv::putText(im_processed,
+                "NUOC DI GOI Y",
+                text_pos_suggest,
+                cv::FONT_HERSHEY_SIMPLEX,
+                1.0,
+                cv::Scalar(0, 0, 0, 255),
+                4);
+
+    // Thêm text cho bên đỏ và đen
+    cv::putText(im_processed,
+                "BEN DO:",
+                cv::Point(640, 450),
+                cv::FONT_HERSHEY_SIMPLEX,
+                1.0,
+                cv::Scalar(255, 0, 0, 255),
+                2);
+
+    cv::putText(im_processed,
+                "BEN DEN:",
+                cv::Point(640, 530),
+                cv::FONT_HERSHEY_SIMPLEX,
+                1.0,
+                cv::Scalar(0, 0, 0, 255),
+                2);
+
+    // Xử lý num_sources
+    if (nvosdpadding->num_sources && strlen(nvosdpadding->num_sources) > 0) {
+        int text_y = 0;
+        int color_text = 255;     
+        if (strncmp(nvosdpadding->num_sources, "BUOC: r", 7) == 0) {
+            text_y = 490;
+            color_text = 255;
+        } else if (strncmp(nvosdpadding->num_sources, "BUOC: b", 7) == 0) {
+            text_y = 570;
+            color_text = 0;
+        }
+        std::string num_sources_text = std::string(nvosdpadding->num_sources);          
+        cv::putText(im_processed, 
+                   num_sources_text,
+                   cv::Point(640, text_y),
+                   cv::FONT_HERSHEY_SIMPLEX,
+                   0.7,              
+                   cv::Scalar(color_text, 0, 0, 255),  
+                   2);
+    }
+
+    // Xử lý padding_text
+    if (nvosdpadding->padding_text && strlen(nvosdpadding->padding_text) > 0) {
+        gchar **lines = g_strsplit(nvosdpadding->padding_text, "\n", -1);
+        int line_height = 30;
+        
+        for (int i = 0; lines[i] != NULL; i++) {
+            cv::Point text_pos(640, current_y);
+            cv::putText(im_processed, 
+                       lines[i],
+                       text_pos,
+                       cv::FONT_HERSHEY_SIMPLEX,
+                       0.7,  
+                       cv::Scalar(0, 0, 0, 255),  
+                       2);
+            current_y += line_height;
+        }
+        g_strfreev(lines);
+    }
+}
+
+void processBatchedVideo(NvBufSurface* surface, GstNvOsdPadding* nvosdpadding) {
+    if (!surface || !surface->surfaceList || !surface->surfaceList[0].dataPtr) {
+        GST_ERROR_OBJECT(nvosdpadding, "Invalid surface data");
+        return;
+    }
+
+    // Lấy thông tin surface
+    int total_width = surface->surfaceList[0].width;
+    int total_height = surface->surfaceList[0].height;
+    size_t data_size = surface->surfaceList[0].dataSize;
+    size_t pitch = surface->surfaceList[0].pitch;
+
+    GST_DEBUG_OBJECT(nvosdpadding, "Surface info - width: %d, height: %d, size: %zu, pitch: %zu",
+                     total_width, total_height, data_size, pitch);
+
+    // Kiểm tra kích thước
+    if (total_width <= 0 || total_height <= 0 || data_size == 0) {
+        GST_ERROR_OBJECT(nvosdpadding, "Invalid surface dimensions or size");
+        return;
+    }
+
+    // Map surface trước khi xử lý
+    if (NvBufSurfaceMap(surface, -1, -1, NVBUF_MAP_READ_WRITE) != 0) {
+        GST_ERROR_OBJECT(nvosdpadding, "Failed to map surface");
+        return;
+    }
+
+    unsigned char* src_data = nullptr;
+    try {
+        // Cấp phát bộ nhớ
+        src_data = new unsigned char[data_size];
+        if (!src_data) {
+            GST_ERROR_OBJECT(nvosdpadding, "Failed to allocate memory");
+            NvBufSurfaceUnMap(surface, -1, -1);
+            return;
+        }
+
+        // Copy từ GPU sang CPU
+        cudaError_t err = cudaMemcpy(src_data, 
+                                   surface->surfaceList[0].dataPtr,
+                                   data_size,
+                                   cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess) {
+            GST_ERROR_OBJECT(nvosdpadding, "CUDA memcpy failed: %s", cudaGetErrorString(err));
+            delete[] src_data;
+            NvBufSurfaceUnMap(surface, -1, -1);
+            return;
+        }
+
+        // Tạo Mat với kiểm tra
+        cv::Mat full_frame;
+        try {
+            full_frame = cv::Mat(total_height, total_width, CV_8UC4, src_data, pitch);
+            if (full_frame.empty()) {
+                GST_ERROR_OBJECT(nvosdpadding, "Failed to create full_frame Mat");
+                delete[] src_data;
+                NvBufSurfaceUnMap(surface, -1, -1);
+                return;
+            }
+        } catch (const cv::Exception& e) {
+            GST_ERROR_OBJECT(nvosdpadding, "OpenCV error: %s", e.what());
+            delete[] src_data;
+            NvBufSurfaceUnMap(surface, -1, -1);
+            return;
+        }
+
+        // Tạo result frame
+        cv::Mat result_frame = full_frame.clone();
+        
+        // Xử lý từng video
+        int single_width = 640;  // Kích thước cố định cho mỗi video
+        int single_height = 640;
+
+        // Kiểm tra và điều chỉnh kích thước nếu cần
+        if (single_width > total_width || single_height > total_height) {
+            GST_ERROR_OBJECT(nvosdpadding, "Single video size too large for frame");
+            delete[] src_data;
+            NvBufSurfaceUnMap(surface, -1, -1);
+            return;
+        }
+
+        // Xử lý video
+        try {
+            // Resize về kích thước mong muốn
+            cv::Mat resized_video;
+            cv::resize(full_frame, resized_video, cv::Size(single_width, single_height));
+
+            // Tạo frame với padding
+            cv::Mat padded_video(single_height, single_width * 2, CV_8UC4,
+                cv::Scalar(nvosdpadding->padding_color[0],
+                          nvosdpadding->padding_color[1],
+                          nvosdpadding->padding_color[2],
+                          nvosdpadding->padding_color[3]));
+
+            // Copy video đã resize vào vùng padding
+            resized_video.copyTo(padded_video(cv::Rect(0, 0, single_width, single_height)));
+
+            // Thêm text
+            addTextToVideo(padded_video, nvosdpadding, 0);
+
+            // Copy kết quả về frame gốc
+            cv::resize(padded_video, result_frame, cv::Size(total_width, total_height));
+
+        } catch (const cv::Exception& e) {
+            GST_ERROR_OBJECT(nvosdpadding, "Error processing video: %s", e.what());
+            delete[] src_data;
+            NvBufSurfaceUnMap(surface, -1, -1);
+            return;
+        }
+
+        // Copy kết quả về GPU
+        try {
+            copyMatToNvBufSurface(result_frame, surface, 0);
+        } catch (const std::exception& e) {
+            GST_ERROR_OBJECT(nvosdpadding, "Failed to copy result back to GPU: %s", e.what());
+            delete[] src_data;
+            NvBufSurfaceUnMap(surface, -1, -1);
+            return;
+        }
+
+        delete[] src_data;
+        NvBufSurfaceUnMap(surface, -1, -1);
+
+    } catch (const std::exception& e) {
+        GST_ERROR_OBJECT(nvosdpadding, "Unexpected error: %s", e.what());
+        if (src_data) {
+            delete[] src_data;
+        }
+        NvBufSurfaceUnMap(surface, -1, -1);
+    }
+}
+
 /**
  * Called when element recieves an input buffer from upstream element.
  */
@@ -361,6 +574,7 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
 {
   GstNvOsdPadding *nvosdpadding = GST_NVOSDPADDING (trans);
   GstMapInfo inmap = GST_MAP_INFO_INIT;
+  
   unsigned int rect_cnt = 0;
   unsigned int segment_cnt = 0;
   unsigned int text_cnt = 0;
@@ -372,26 +586,39 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
   gpointer state = NULL;
   NvBufSurface *surface = NULL;
   NvDsBatchMeta *batch_meta = NULL;
+  if (!buf) {
+        GST_ERROR_OBJECT(nvosdpadding, "Null buffer received");
+        return GST_FLOW_ERROR;
+    }
 
   if (!gst_buffer_map (buf, &inmap, GST_MAP_READ)) {
-    // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-    //     ("Unable to map info from buffer"), NULL);
-    return GST_FLOW_ERROR;
+      GST_ERROR_OBJECT(nvosdpadding, "Failed to map buffer");
+      return GST_FLOW_ERROR;
   }
+
+  // NvBufSurface *surface = (NvBufSurface *) inmap.data;
+  surface = (NvBufSurface *) inmap.data;
+  if (!surface) {
+      GST_ERROR_OBJECT(nvosdpadding, "Invalid surface in buffer");
+      gst_buffer_unmap(buf, &inmap);
+      return GST_FLOW_ERROR;
+  }
+
+  // Log thông tin batch
+  GST_DEBUG_OBJECT(nvosdpadding, "Processing frame %d, batch size: %d", 
+                    nvosdpadding->frame_num, surface->numFilled);
+  // if (!gst_buffer_map (buf, &inmap, GST_MAP_READ)) {
+  //   return GST_FLOW_ERROR;
+  // }
 
   nvds_set_input_system_timestamp (buf, GST_ELEMENT_NAME (nvosdpadding));
 
   cudaError_t CUerr = cudaSuccess;
   CUerr = cudaSetDevice (nvosdpadding->gpu_id);
   if (CUerr != cudaSuccess) {
-    // GST_ELEMENT_ERROR (nvosdpadding, RESOURCE, FAILED,
-    //     ("Unable to set device"), NULL);
     return GST_FLOW_ERROR;
   }
-  GST_LOG_OBJECT (nvosdpadding, "SETTING CUDA DEVICE = %d in nvosdpadding func=%s\n",
-      nvosdpadding->gpu_id, __func__);
   
-  surface = (NvBufSurface *) inmap.data;
   
 
   /* Get metadata. Update rectangle and text params */
@@ -692,152 +919,28 @@ GST_NVOSDPADDING_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     }
   }
 
+  // Áp dụng các thay đổi OSD nếu đang ở chế độ GPU
   if (nvosdpadding->nvosdpadding_mode == MODE_GPU) {
-      if (nvll_osd_apply (nvosdpadding->nvosdpadding_context, NULL, surface) == -1) {
+    if (nvll_osd_apply (nvosdpadding->nvosdpadding_context, NULL, surface) == -1) {
+      return GST_FLOW_ERROR;
+    }
+  }
+
+  // Xử lý padding sau khi đã vẽ xong các elements
+  if (nvosdpadding->enable_padding && nvosdpadding->padding_size > 0) {
+      try {
+          processBatchedVideo(surface, nvosdpadding);
+      }
+      catch (const std::exception& e) {
+          GST_ERROR_OBJECT(nvosdpadding, "Error in processBatchedVideo: %s", e.what());
+          gst_buffer_unmap(buf, &inmap);
           return GST_FLOW_ERROR;
       }
   }
 
-  // Thêm padding  cho tất cả các surface trong batch
-  if (nvosdpadding->enable_padding && nvosdpadding->padding_size > 0) {
-    unsigned char *src_data = new unsigned char[surface->surfaceList[0].dataSize];
-    
-    // Copy từ GPU sang CPU
-    cudaError_t err = cudaMemcpy(src_data, 
-                               surface->surfaceList[0].dataPtr,
-                               surface->surfaceList[0].dataSize,
-                               cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) {
-        GST_ERROR_OBJECT(nvosdpadding, "Failed to copy data from GPU: %s", 
-                       cudaGetErrorString(err));
-        delete[] src_data;
-        return GST_FLOW_ERROR;
-    }
-
-    int frame_width = surface->surfaceList[0].width;
-    int frame_height = surface->surfaceList[0].height;
-    size_t frame_step = surface->surfaceList[0].pitch;
-    int num_videos = 4;
-
-    try {
-        cv::Mat rgba(frame_height, frame_width, CV_8UC4, src_data, frame_step);
-        // w_rz = frame_width /2;
-        // h_rz = frame_height /2;
-        cv::resize(rgba, rgba, cv::Size(640, 640));
-        cv::Mat im_processed(frame_height, frame_width, CV_8UC4, cv::Scalar(nvosdpadding->padding_color[0],
-                             nvosdpadding->padding_color[1], 
-                             nvosdpadding->padding_color[2],
-                             nvosdpadding->padding_color[3]));
-        rgba.copyTo(im_processed(cv::Rect(0, 0, 640, 640)));
-        printf("-------------------------num sources %s:", nvosdpadding->num_sources);
-        int current_y = 30;
-        cv::Point text_pos_suggest(640, 400);
-        cv::putText(im_processed, 
-                    "NUOC DI GOI Y",
-                    text_pos_suggest,
-                    cv::FONT_HERSHEY_SIMPLEX,
-                    1.0,
-                    cv::Scalar(0, 0, 0, 255),
-                    4);
-        cv::Point text_pos_suggest_red(640, 450);
-        cv::putText(im_processed, 
-                    "BEN DO:",
-                    text_pos_suggest_red,
-                    cv::FONT_HERSHEY_SIMPLEX,
-                    1.0,
-                    cv::Scalar(255, 0, 0, 255),
-                    2);
-        cv::Point text_pos_suggest_black(640, 530);
-        cv::putText(im_processed, 
-                    "BEN DEN:",
-                    text_pos_suggest_black,
-                    cv::FONT_HERSHEY_SIMPLEX,
-                    1.0,
-                    cv::Scalar(0, 0, 0, 255),
-                    2);
-        if (nvosdpadding->num_sources && strlen(nvosdpadding->num_sources) > 0) {
-            int text_x = frame_width + 10; 
-            int text_y = 0;
-            int color_text = 255;     
-            if (strncmp(nvosdpadding->num_sources, "BUOC: r", 7) == 0) {
-                text_y = 490;
-                color_text = 255;
-            } else if (strncmp(nvosdpadding->num_sources, "BUOC: b", 7) == 0) {
-                text_y = 570;
-                color_text = 0;
-            } else {
-                text_y = 20; // Vị trí mặc định nếu không khớp
-            }
-            std::string num_sources_text = std::string(nvosdpadding->num_sources);          
-            cv::putText(im_processed, 
-                      num_sources_text,
-                      cv::Point(640, text_y),
-                      cv::FONT_HERSHEY_SIMPLEX,
-                      0.7,              
-                      cv::Scalar(color_text, 0, 0, 255),  
-                      2);              
-            text_y += 40; 
-        }
-        cv::Point text_pos_move_history(640, current_y);
-        cv::putText(im_processed, 
-                    "LICH SU NUOC DI:",
-                    text_pos_move_history,
-                    cv::FONT_HERSHEY_SIMPLEX,
-                    1.0,
-                    cv::Scalar(0, 0, 0, 255),
-                    4);
-        current_y += 40;
-        if (nvosdpadding->padding_text && strlen(nvosdpadding->padding_text) > 0) {
-            gchar **lines = g_strsplit(nvosdpadding->padding_text, "\n", -1);
-            int line_height = 30; 
-            // int current_y = 20;  
-            int text_x = frame_width + 10;
-  
-            for (int i = 0; lines[i] != NULL; i++) {
-                cv::Point text_pos(640, current_y);
-                
-                cv::putText(im_processed, 
-                           lines[i],
-                           text_pos,
-                           cv::FONT_HERSHEY_SIMPLEX,
-                           0.7,  
-                           cv::Scalar(0, 0, 0, 255),  
-                           2);  
-                
-                current_y += line_height;
-            }
-
-            g_strfreev(lines);
-        }
-
-        // NvBufSurface *hold = NULL;
-        // hold = (NvBufSurface *) im_processed.data;
-        // Copy kết quả từ CPU về GPU
-        // surface = hold;
-        // cudaMemcpy(surface->surfaceList[0].dataPtr,
-        //           im_processed.data,
-        //           im_processed.total() * im_processed.elemSize(),
-        //           cudaMemcpyHostToDevice);
-        copyMatToNvBufSurface(im_processed, surface, 0);
-
-        delete[] src_data;
-    }
-    catch (cv::Exception& e) {
-        GST_ERROR_OBJECT(nvosdpadding, "OpenCV error: %s", e.what());
-        delete[] src_data;
-        return GST_FLOW_ERROR;
-    }
-  }
-
-  nvtxRangePop ();
-  nvosdpadding->frame_num++;
-
-  nvds_set_output_system_timestamp (buf, GST_ELEMENT_NAME (nvosdpadding));
-
-  gst_buffer_unmap (buf, &inmap);
+  gst_buffer_unmap(buf, &inmap);
   return GST_FLOW_OK;
 }
-
 
 /* Called when the plugin is destroyed.
  * Free all structures which have been malloc'd.

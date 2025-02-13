@@ -14,7 +14,7 @@ def warp_image(image, src_points, dst_size=(500, 500)):
         np.ndarray: Ảnh sau khi thực hiện phép biến đổi phối cảnh.
         np.ndarray: Ma trận biến đổi phối cảnh đã sử dụng.
     """
-    width, height = dst_size
+    width, height = image.shape[1], image.shape[0]
     # Định nghĩa các điểm đích (destination points)
     dst_points = np.float32([[0, 0], [width, 0], [width, height], [0, height]])
     
@@ -25,6 +25,41 @@ def warp_image(image, src_points, dst_size=(500, 500)):
     warped_image = cv2.warpPerspective(image, matrix, (width, height))
     
     return warped_image, matrix
+def expand_corners(corners, expand_px=10, img_shape=None):
+    """
+    Mở rộng 4 góc của bàn cờ ra theo số pixel chỉ định
+    
+    Parameters:
+        corners: np.array của 4 góc [(x1,y1), (x2,y2), (x3,y3), (x4,y4)]
+        expand_px: số pixel cần mở rộng (mặc định 10px)
+        img_shape: tuple (height, width) của ảnh gốc để giới hạn vùng mở rộng
+    
+    Returns:
+        np.array của 4 góc đã được mở rộng
+    """
+    expanded_corners = corners.copy()
+    
+    # Thứ tự góc: top-left, top-right, bottom-right, bottom-left
+    for i in range(4):
+        if i == 0:  # Top-left
+            expanded_corners[i][0] -= expand_px 
+            expanded_corners[i][1] -= expand_px  # Giảm y
+        elif i == 1:  # Top-right
+            expanded_corners[i][0] += expand_px  # Tăng x
+            expanded_corners[i][1] -= expand_px  # Giảm y
+        elif i == 2:  # Bottom-right
+            expanded_corners[i][0] += expand_px  # Tăng x
+            expanded_corners[i][1] += expand_px  # Tăng y
+        else:  # Bottom-left
+            expanded_corners[i][0] -= expand_px  # Giảm x
+            expanded_corners[i][1] += expand_px  # Tăng y
+            
+    # Giới hạn các góc trong phạm vi ảnh nếu img_shape được cung cấp
+    if img_shape is not None:
+        height, width = img_shape[:2]
+        expanded_corners[:, 0] = np.clip(expanded_corners[:, 0], 0, width - 1)  # Giới hạn x
+        expanded_corners[:, 1] = np.clip(expanded_corners[:, 1], 0, height - 1)
+    return expanded_corners
 def find_chessboard_quadrilateral(image, mask_maps):
     """
     Tìm tứ giác của bàn cờ trên ảnh và thực hiện warp ảnh để có góc nhìn trực diện.
@@ -73,8 +108,11 @@ def find_chessboard_quadrilateral(image, mask_maps):
 
     board_corners = approx.reshape(4, 2)
 
-    # Sắp xếp lại các góc của tứ giác theo thứ tự: trên-left, trên-right, dưới-right, dưới-left
+    # Sắp xếp lại các góc của tứ giác
     board_corners = sort_corners(board_corners)
+    
+    # Mở rộng các góc ra 10px
+    board_corners = expand_corners(board_corners, expand_px=5, img_shape=image.shape)
 
     warped_image, warp_matrix = warp_image(image, board_corners)
 
@@ -107,7 +145,7 @@ class YOLOModel:
     def __init__(self):
         self.aligner = YOLOSeg(
             path= "seg/weights/board_mask.onnx",
-            conf_thres = 0.95,
+            conf_thres = 0.9,
             iou_thres = 0.6,
             use_gpu= False,
             num_masks= 32

@@ -1,0 +1,24 @@
+time="2025-02-11T07:47:53Z" level=debug caller="entry.go:313:github.com/sirupsen/logrus.(*Entry).Debug" cmd="position fen 2bak4/3Ra2r1/n1c3n2/4p1N1p/p4N3/6PC1/P1r5c/3CB4/9/3AKABR1 w - - 0 1"
+time="2025-02-11T07:47:53Z" level=debug msg="==== 初始化后评分" caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" p.blackPstVal=32 p.blackStrengthVal=8760 p.redPstVal=54 p.redStrengthVal=8850
+time="2025-02-11T07:47:53Z" level=debug caller="entry.go:313:github.com/sirupsen/logrus.(*Entry).Debug" cmd="go movetime 2000"
+time="2025-02-11T07:47:53Z" level=debug msg="搜索前局面估值" caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" val=112
+time="2025-02-11T07:47:53Z" level=debug msg="搜索后执行着法后的局面估值" blackPstVal=24 blackStrengthVal=8490 caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" redPstVal=52 redStrengthVal=8850 val=-378
+time="2025-02-11T07:47:53Z" level=debug msg="返回最佳着法" bestmove=f5g7 caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" depth=4 score=346
+time="2025-02-11T08:40:31Z" level=debug caller="entry.go:313:github.com/sirupsen/logrus.(*Entry).Debug" cmd="position fen 2bak4/3Ra2r1/n1c3n2/4p1N1p/p4N3/6PC1/P1r5c/3CB4/9/3AKABR1 w - - 0 1"
+time="2025-02-11T08:40:31Z" level=debug msg="==== 初始化后评分" caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" p.blackPstVal=32 p.blackStrengthVal=8760 p.redPstVal=54 p.redStrengthVal=8850
+time="2025-02-11T08:40:31Z" level=debug caller="entry.go:313:github.com/sirupsen/logrus.(*Entry).Debug" cmd="go movetime 2000"
+time="2025-02-11T08:40:31Z" level=debug msg="搜索前局面估值" caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" val=112
+time="2025-02-11T08:40:31Z" level=debug msg="搜索后执行着法后的局面估值" blackPstVal=24 blackStrengthVal=8490 caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" redPstVal=52 redStrengthVal=8850 val=-378
+time="2025-02-11T08:40:31Z" level=debug msg="返回最佳着法" bestmove=f5g7 caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" depth=4 score=346
+time="2025-02-11T08:40:38Z" level=debug caller="entry.go:313:github.com/sirupsen/logrus.(*Entry).Debug" cmd="position fen rnbakabnr/9/1c5c1/p1p1p1p1p/9/6P2/P1P1P3P/1C5C1/9/RNBAKABNR b - - 0 1"
+time="2025-02-11T08:40:38Z" level=debug msg="==== 初始化后评分" caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" p.blackPstVal=-4 p.blackStrengthVal=8940 p.redPstVal=6 p.redStrengthVal=8940
+time="2025-02-11T08:40:38Z" level=debug caller="entry.go:313:github.com/sirupsen/logrus.(*Entry).Debug" cmd="go movetime 2000"
+time="2025-02-11T08:40:38Z" level=debug msg="搜索前局面估值" caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" val=-10
+time="2025-02-11T08:40:38Z" level=debug msg="搜索后执行着法后的局面估值" blackPstVal=4 blackStrengthVal=8940 caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" redPstVal=6 redStrengthVal=8940 val=2
+time="2025-02-11T08:40:38Z" level=debug msg="返回最佳着法" bestmove=h7c7 caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" depth=4 score=-10
+time="2025-02-11T08:40:49Z" level=debug caller="entry.go:313:github.com/sirupsen/logrus.(*Entry).Debug" cmd="position fen rnbakabnr/9/1c5c1/p3p1p1p/2p6/6P2/P1P1P3P/1C5C1/9/RNBAKABNR w - - 0 1"
+time="2025-02-11T08:40:49Z" level=debug msg="==== 初始化后评分" caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" p.blackPstVal=6 p.blackStrengthVal=8940 p.redPstVal=6 p.redStrengthVal=8940
+time="2025-02-11T08:40:49Z" level=debug caller="entry.go:313:github.com/sirupsen/logrus.(*Entry).Debug" cmd="go movetime 2000"
+time="2025-02-11T08:40:49Z" level=debug msg="搜索前局面估值" caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" val=0
+time="2025-02-11T08:40:49Z" level=debug msg="搜索后执行着法后的局面估值" blackPstVal=6 blackStrengthVal=8940 caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" redPstVal=18 redStrengthVal=8940 val=-17
+time="2025-02-11T08:40:49Z" level=debug msg="返回最佳着法" bestmove=h0g2 caller="entry.go:349:github.com/sirupsen/logrus.(*Entry).Logf" depth=4 score=0

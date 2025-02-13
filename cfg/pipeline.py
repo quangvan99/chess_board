@@ -108,7 +108,8 @@ viz = {
             'display-text': 1,
             'enable-padding': True,  
             'padding-size': 500,      
-            'padding-color': "255,255,255,255"  
+            'padding-color': "255,255,255,255",
+            'num-sources': 4  
         }
     },
     # "nvdsosd": {

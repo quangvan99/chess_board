@@ -105,6 +105,7 @@ struct _GstNvOsdPadding
   guint num_circles;
   /** Size padding */
   guint padding_size;
+  
 
   /** Structure containing details of rectangles to be drawn for a frame. */
   NvOSD_FrameRectParams *frame_rect_params;

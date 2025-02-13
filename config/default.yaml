@@ -1,15 +1,20 @@
 model:
   board_detection:
-    model_path: "model/board_mask.onnx"
+    model_path: "seg/weights/board_mask.onnx"
     conf_threshold: 0.8
     iou_threshold: 0.6
     num_masks: 32
   
   piece_detection:
-    model_path: "model/piece_detect_v11m.onnx"
-    class_names_path: "model/class_names.txt"
+    model_path: "seg/weights/piece_detect_v11m.onnx"
+    class_names_path: "seg/weights/class_names.txt"
     conf_threshold: 0.6
     iou_threshold: 0.5
+
+  intersection_detection:
+    model_path: "seg/weights/inter_detection.onnx"
+    conf_threshold: 0.5
+    iou_threshold: 0.9
 
   engine:
     engine_path: "godogpaw/engines/godogpaw"

@@ -1764,7 +1764,7 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
         frame_width, 
         frame_height
     );
-
+    printf("*****************************check***************************");
     std::vector<cv::Point2f> corners = points["corners"];
     if (corners.size() != 4) {
         std::cerr << "Error: Insufficient corner points. Exiting...\n";
@@ -1807,12 +1807,12 @@ gst_nvinfer_process_full_frame (GstNvInfer * nvinfer, GstBuffer * inbuf,
     // cv::resize(transformed_image, transformed_image, cv::Size(frame_width, frame_height));
     // cv::cvtColor(transformed_image, transformed_image, cv::COLOR_RGBA2RGB);
     
-    // cudaMemcpy(in_surf->surfaceList[i].dataPtr, transformed_image.data, 
-    //           transformed_image.total() * transformed_image.elemSize(), cudaMemcpyHostToDevice);
-    // free(src_data);
+    cudaMemcpy(in_surf->surfaceList[i].dataPtr, transformed_image.data, 
+              transformed_image.total() * transformed_image.elemSize(), cudaMemcpyHostToDevice);
+    free(src_data);
 
-    copyMatToNvBufSurface(transformed_image, in_surf, 0);
-    delete src_data;
+    // copyMatToNvBufSurface(transformed_image, in_surf, 0);
+    // delete src_data;
     // printf("---------------\n");
     // printf("source_id %d \n", frame.frame_meta->source_id);
     // printf("source_frame_width %d \n", frame.frame_meta->source_frame_width);
